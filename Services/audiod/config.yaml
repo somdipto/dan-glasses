@@ -1,0 +1,26 @@
+audio:
+  device: default
+  sample_rate: 16000
+  channels: 1
+  period_size: 512
+  buffer_periods: 8
+
+vad:
+  model: silero_vit.onnx
+  threshold: 0.5
+  min_speech_ms: 250
+  min_silence_ms: 200
+
+whisper:
+  model: /home/workspace/dan-glasses/models/ggml-base.bin
+  language: auto
+  threads: 2
+
+publish:
+  mode: stdout
+  socket_path: /run/audiod.sock
+  ws_port: 8091
+
+push_to_talk:
+  enabled: false
+  hotkey: space
