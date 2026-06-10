@@ -197,7 +197,7 @@ ws://localhost:8091
 | **Total** | **400-700 ms** |
 
 ## Tests
-- **51 passing** (7 files)
+- **55 passing** (8 files)
 - 6 capture / ring buffer
 - 6 VAD (energy fallback)
 - 7 VAD (ONNX Silero)
@@ -205,15 +205,23 @@ ws://localhost:8091
 - 18 publish (frame encode/decode + WS server handshake + ping/pong)
 - 4 pipeline integration
 - 3 whisper end-to-end (real whisper-cli + ggml-tiny)
+- 4 silence invariant — added by DAN-2: silence → 0 events, RFC 6455 handshake check against WS server
 
 ## Status: SHIPPED v2 ✅
-- 51/51 tests passing
+- 55/55 tests passing (8 files; +4 silence invariants this session)
 - whisper-cli at /usr/local/bin/whisper-cli (1.0 MB)
 - ggml-base.bin (148 MB) + ggml-tiny.bin (78 MB) at /home/workspace/dan-glasses/models/
 - Silero VAD ONNX at ~/.cache/torch/hub/.../silero_vad.onnx
 - WebSocket streaming on port 8091 (RFC 6455, stdlib)
 - Tauri `LiveTranscript.tsx` connects to ws://localhost:8091
 - systemd unit at packaging/systemd/audiod.service
+
+## Operational State (DAN-2 session)
+- `audiod.py --port 8090` running, ~12h uptime, stable
+- `curl :8090/health` → `{"status":"ok","service":"audiod"}`
+- `curl :8090/status` → `running=true, vad_ready=true`
+- WS handshake verified against live process (Sec-WebSocket-Accept matches RFC 6455)
+- Silero VAD: ONNX session loaded, `is_ready()=True`
 
 ## v3 Roadmap
 - Streaming whisper (low-latency chunked inference) — currently
