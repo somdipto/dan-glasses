@@ -79,12 +79,11 @@ class WhisperTranscriber:
             )
 
             if result.returncode == 0:
-                # Parse output: "[00:00:00.000 --> 00:00:02.920]   transcript text"
-                text = result.stdout.strip()
-                text = re.sub(r'^\[.*?\]\s*', '', text)  # strip leading timestamp
-                text = text.strip()
-                # Skip blank audio
-                if text == "[BLANK_AUDIO]":
+                # whisper can emit multiple timestamped token lines; join all
+                # text tokens, then strip a single BLANK_AUDIO marker if present.
+                tokens = re.findall(r'\[\d{2}:\d{2}:\d{2}\.\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}\.\d{3}\]\s*(\S+)', result.stdout)
+                text = " ".join(tokens).strip()
+                if "[BLANK_AUDIO]" in text.replace(" ", "").upper() or "BLANK_AUDIO" in text.upper():
                     text = ""
                 duration_ms = int(len(pcm) / sample_rate * 1000)
                 return {
