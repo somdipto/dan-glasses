@@ -22,6 +22,12 @@ from typing import Optional
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 
+# Lazy singleton used by publish_transcript() so ad-hoc one-liners emit
+# the full transcript event schema (type, session_id, event_id, seq,
+# text, start_ms, end_ms, confidence, ts_ms) instead of a partial one.
+_stdout_publisher: Optional["TranscriptPublisher"] = None
+
+
 def _accept_key(client_key: str) -> str:
     """Compute Sec-WebSocket-Accept from client's Sec-WebSocket-Key (RFC 6455 §4.2.2)."""
     digest = hashlib.sha1((client_key + WS_GUID).encode("ascii")).digest()
@@ -453,13 +459,22 @@ def _send_http_error(sock: socket.socket, code: int, msg: str):
 
 
 def publish_transcript(text: str, start_ms: int, end_ms: int, confidence: float):
-    """Convenience function to publish a transcript event to stdout."""
-    event = {
+    """Convenience function to publish a transcript event to stdout.
+
+    Routes through the same TranscriptPublisher used by the pipeline so the
+    emitted event matches the schema pinned by test_event_schema_conformance.py
+    (type, session_id, event_id, seq, text, start_ms, end_ms, confidence, ts_ms).
+
+    A module-level lazy singleton keeps the call site a one-liner while
+    sharing one session_id and monotonic seq counter across the process.
+    """
+    global _stdout_publisher
+    if _stdout_publisher is None:
+        _stdout_publisher = TranscriptPublisher(mode="stdout")
+    _stdout_publisher.publish({
         "type": "transcript",
         "text": text,
         "start_ms": start_ms,
         "end_ms": end_ms,
         "confidence": confidence,
-    }
-    sys.stdout.write(json.dumps(event) + "\n")
-    sys.stdout.flush()
+    })
