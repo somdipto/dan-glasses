@@ -1,4 +1,8 @@
-"""Push-to-talk trigger via keyboard."""
+"""Push-to-talk trigger via keyboard.
+
+Edge-triggered: only fires on key-down after a key-up. Holding the key
+does not spam the trigger callback.
+"""
 
 import threading
 import sys
@@ -7,7 +11,7 @@ from typing import Callable, Optional
 
 
 class PTTTrigger:
-    """Push-to-talk keyboard trigger."""
+    """Push-to-talk keyboard trigger (edge-triggered)."""
 
     def __init__(self, hotkey: str = "space", on_trigger: Optional[Callable[[], None]] = None):
         self.hotkey = hotkey
@@ -35,7 +39,7 @@ class PTTTrigger:
             self._listen_fallback()
 
     def _listen_linux(self):
-        """Linux keyboard listener."""
+        """Linux keyboard listener (evdev, edge-triggered)."""
         try:
             import evdev
             from evdev import ecodes
@@ -50,18 +54,35 @@ class PTTTrigger:
                 print("audiod: no keyboard devices for PTT")
                 return
 
+            # Edge detection: track last value per (device.path, keycode).
+            # value: 0=up, 1=down, 2=repeat. Only fire on 0→1 transition.
+            last_value: dict[tuple[str, int], int] = {}
+
             while self._running:
                 r, _, _ = sel.select(keyboard_devices, [], [], 0.1)
                 for d in r:
-                    for event in d.read():
-                        if event.type == ecodes.EV_KEY and event.value == 1:
-                            self.on_trigger()
+                    try:
+                        for event in d.read():
+                            if event.type != ecodes.EV_KEY:
+                                continue
+                            key = (d.path, event.code)
+                            # Normalize: 1=down, 2=repeat → both count as "down"
+                            # for edge detection, so 1→2→1 doesn't look like a
+                            # new down edge (would re-fire while holding).
+                            normalized = 1 if event.value in (1, 2) else 0
+                            prev = last_value.get(key, 0)
+                            last_value[key] = normalized
+                            if normalized == 1 and prev != 1:
+                                # Edge: 0→1 (or initial down)
+                                self.on_trigger()
+                    except OSError:
+                        continue
         except ImportError:
             print("audiod: evdev not available for PTT")
             self._listen_fallback()
 
     def _listen_fallback(self):
-        """TTY-based fallback for push-to-talk."""
+        """TTY-based fallback for push-to-talk (edge-triggered)."""
         try:
             import tty
             import termios
@@ -70,11 +91,14 @@ class PTTTrigger:
             old = termios.tcgetattr(fd)
             try:
                 tty.setcbreak(fd)
+                last_was_space = False
                 while self._running:
                     if sel.select([sys.stdin], [], [], 0.1)[0]:
                         c = sys.stdin.read(1)
-                        if c == " ":
+                        is_space = c == " "
+                        if is_space and not last_was_space:
                             self.on_trigger()
+                        last_was_space = is_space
             finally:
                 termios.tcsetattr(fd, termios.TCSADRAIN, old)
         except Exception:

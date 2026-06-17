@@ -75,9 +75,18 @@ class TestWhisperEndToEnd:
         assert result["end_ms"] == 0
 
     def test_silence_produces_blank_audio(self):
-        """whisper-cli should return [BLANK_AUDIO] for true silence, which we strip."""
+        """whisper-cli returns [BLANK_AUDIO] for silence; we must strip it to ''."""
         pcm = np.zeros(16000, dtype=np.int16)  # 1 second of silence
         tr = WhisperTranscriber(model_path=MODEL)
         result = tr.transcribe(pcm, 16000)
-        # Either blank audio (stripped to "") or empty; either way no crash
-        assert isinstance(result["text"], str)
+        # whisper-tiny emits BLANK_AUDIO as multiple tokens ("BLANK", "_", "AUDIO").
+        # The strip path must catch that pattern and return empty text.
+        assert result["text"] == "", f"expected empty text for silence, got {result['text']!r}"
+
+    def test_silence_pure_zeros_50ms_above_short_circuit(self):
+        """Silence longer than 160 samples should also yield empty text, not crash."""
+        pcm = np.zeros(4000, dtype=np.int16)  # 250ms silence
+        tr = WhisperTranscriber(model_path=MODEL)
+        result = tr.transcribe(pcm, 16000)
+        assert result["text"] == ""
+        assert result["end_ms"] == 250

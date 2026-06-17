@@ -1,0 +1,177 @@
+.live-transcript {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #0e0e10;
+  color: #e8e6e3;
+  border: 1px solid #2a2a2d;
+  border-radius: 8px;
+  overflow: hidden;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.live-transcript-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #18181b;
+  border-bottom: 1px solid #2a2a2d;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #a1a1aa;
+}
+
+.live-transcript-status {
+  font-weight: 600;
+}
+
+.live-transcript-count {
+  margin-left: auto;
+  color: #71717a;
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.live-dot-open { background: #22c55e; box-shadow: 0 0 8px #22c55e; }
+.live-dot-connecting { background: #eab308; }
+.live-dot-closed { background: #71717a; }
+.live-dot-error { background: #ef4444; }
+
+.live-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: #111114;
+  border-bottom: 1px solid #2a2a2d;
+  font-size: 12px;
+  color: #a1a1aa;
+  flex-wrap: wrap;
+}
+
+.live-control-group {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.live-control-label {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #71717a;
+  font-size: 10px;
+}
+
+.live-control-button {
+  background: #27272a;
+  border: 1px solid #3f3f46;
+  color: #e4e4e7;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.live-control-button:hover:not(:disabled) {
+  background: #3f3f46;
+  border-color: #52525b;
+}
+
+.live-control-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.live-control-button.start { border-color: #16a34a; color: #4ade80; }
+.live-control-button.start:hover:not(:disabled) { background: #14532d; }
+.live-control-button.stop { border-color: #b91c1c; color: #f87171; }
+.live-control-button.stop:hover:not(:disabled) { background: #7f1d1d; }
+.live-control-button.ptt { border-color: #ca8a04; color: #facc15; }
+.live-control-button.ptt:hover:not(:disabled) { background: #713f12; }
+.live-control-button.restart { border-color: #6366f1; color: #a5b4fc; }
+.live-control-button.restart:hover:not(:disabled) { background: #312e81; }
+
+.live-control-status {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.live-control-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #1f1f23;
+  border: 1px solid #2a2a2d;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.live-control-status-chip .live-dot {
+  width: 6px;
+  height: 6px;
+}
+
+.live-control-status-chip.running { color: #4ade80; border-color: #14532d; }
+.live-control-status-chip.running .live-dot { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
+.live-control-status-chip.stopped { color: #71717a; }
+.live-control-status-chip.stopped .live-dot { background: #71717a; }
+.live-control-status-chip.unreachable { color: #f87171; border-color: #7f1d1d; }
+.live-control-status-chip.unreachable .live-dot { background: #ef4444; }
+
+.live-transcript-list {
+  list-style: none;
+  margin: 0;
+  padding: 12px 14px;
+  overflow-y: auto;
+  flex: 1;
+  scroll-behavior: smooth;
+}
+
+.live-transcript-empty {
+  color: #52525b;
+  font-style: italic;
+  text-align: center;
+  padding: 24px 0;
+}
+
+.live-transcript-item {
+  display: grid;
+  grid-template-columns: 56px 1fr 44px;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid #1f1f23;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.live-transcript-time {
+  color: #71717a;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+
+.live-transcript-text {
+  color: #fafafa;
+  word-break: break-word;
+}
+
+.live-transcript-confidence {
+  color: #52525b;
+  font-size: 11px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

@@ -10,7 +10,10 @@ import signal
 import numpy as np
 import threading
 import argparse
+import time
+import os
 from pathlib import Path
+from typing import Optional
 
 from capture import ALSACapture
 from vad import VADSpeechDetector
@@ -22,7 +25,17 @@ import http.server
 
 
 class HealthHandler(http.server.BaseHTTPRequestHandler):
-    """HTTP health check handler for audiod."""
+    """HTTP health + control plane for audiod.
+
+    GET  /health    — liveness probe
+    GET  /status    — full deployment diagnostics
+    GET  /config    — current effective config
+    POST /start     — start capture loop (idempotent)
+    POST /stop      — stop capture loop, keep WS clients connected
+    POST /restart   — stop + start
+    POST /ptt       — fire push-to-talk trigger
+    POST /reload    — re-read config.yaml from disk
+    """
     pipeline = None
 
     def do_GET(self):
@@ -32,21 +45,85 @@ class HealthHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b'{"status":"ok","service":"audiod"}')
         elif self.path == "/status":
-            running = False
-            vad_ready = False
-            if HealthHandler.pipeline is not None:
-                p = HealthHandler.pipeline
-                running = p._running
-                vad_ready = p.vad is not None and p.vad.is_ready()
-            import json
-            body = json.dumps({"status": "ok", "service": "audiod", "running": running, "vad_ready": vad_ready})
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(body.encode())
+            self._send_status()
+        elif self.path == "/config":
+            self._send_config()
         else:
             self.send_response(404)
             self.end_headers()
+
+    def do_POST(self):
+        import json as _json
+        if self.path == "/start":
+            self._control(lambda p: p._cmd_start())
+        elif self.path == "/stop":
+            self._control(lambda p: p._cmd_stop())
+        elif self.path == "/restart":
+            self._control(lambda p: p._cmd_restart())
+        elif self.path == "/ptt":
+            self._control(lambda p: p._on_ptt_trigger())
+        elif self.path == "/reload":
+            self._control(lambda p: p._cmd_reload())
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def _control(self, fn):
+        import json as _json
+        if HealthHandler.pipeline is None:
+            self._json_resp(503, {"error": "pipeline not ready"})
+            return
+        try:
+            result = fn(HealthHandler.pipeline) or {"ok": True}
+            self._json_resp(200, result)
+        except Exception as e:
+            self._json_resp(500, {"error": str(e)})
+
+    def _send_status(self):
+        import json as _json
+        base = {
+            "status": "ok",
+            "service": "audiod",
+            "running": False,
+            "vad_ready": False,
+            "device": None,
+            "sample_rate": None,
+            "channels": None,
+            "whisper_model": None,
+            "whisper_threads": None,
+            "ptt_enabled": False,
+            "ptt_hotkey": None,
+            "started_at_ms": 0,
+            "uptime_ms": 0,
+            "pid": os.getpid(),
+            "segments_transcribed": 0,
+            "publisher": {"mode": None, "ws_port": None},
+        }
+        if HealthHandler.pipeline is None:
+            self._json_resp(200, base)
+            return
+        try:
+            extras = HealthHandler.pipeline.stats()
+            base.update(extras)
+            self._json_resp(200, base)
+        except Exception as e:
+            self._json_resp(500, {"error": str(e)})
+
+    def _send_config(self):
+        import json as _json
+        if HealthHandler.pipeline is None:
+            self._json_resp(200, {})
+            return
+        self._json_resp(200, HealthHandler.pipeline.config)
+
+    def _json_resp(self, code: int, body: dict):
+        import json as _json
+        data = _json.dumps(body).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def log_message(self, format, *args):
         pass  # silence HTTP logs
@@ -67,13 +144,30 @@ def start_health_server(port: int = 8090):
 
 
 class AudioPipeline:
-    """Main audio pipeline orchestrating capture → VAD → transcription."""
+    """Main audio pipeline orchestrating capture → VAD → transcription.
 
-    def __init__(self, config: dict):
+    Lifecycle is controlled by the HTTP control plane (/start, /stop,
+    /restart, /reload) AND the legacy entry-point (CLI). start() is
+    non-blocking — the process loop runs on a dedicated thread so the
+    control plane and HTTP server remain responsive.
+    """
+
+    def __init__(self, config: dict, config_path: Optional[str] = None):
         self.config = config
+        self._config_path = config_path or "config.yaml"
         self.sample_rate = config["audio"]["sample_rate"]
         self._running = False
         self._lock = threading.Lock()
+        self._started_at_ms = int(time.time() * 1000)
+        self._segments_transcribed = 0
+        self._dropped_segments = 0
+        self._transcribe_inflight = 0
+        self._process_thread: Optional[threading.Thread] = None
+
+        # Cap on a single speech segment length. Prevents a stuck VAD
+        # from buffering unbounded audio, and bounds the size of any
+        # one whisper.cpp invocation.
+        self._max_segment_ms = config.get("vad", {}).get("max_segment_ms", 10_000)
 
         # Publisher
         pub_cfg = config.get("publish", {})
@@ -125,14 +219,15 @@ class AudioPipeline:
         self._segment_start_ms = 0
 
     def _on_speech_start(self):
-        """Called when VAD detects speech start."""
+        """Called when VAD detects speech start.
+
+        Capture a fresh wall-clock-aligned timestamp; the segment length is
+        computed downstream from the buffer, but the start anchor must be
+        set when the segment begins, not derived from already-stored samples.
+        """
         with self._lock:
-            self._segment_start_ms = int(
-                sum(len(x) for x in self.vad._speech_buffer) * 1000 // self.sample_rate
-                if self.vad._speech_buffer
-                else 0
-            )
-        print(f"audiod: speech start", flush=True)
+            self._segment_start_ms = int(time.time() * 1000) - self._started_at_ms
+        print(f"audiod: speech start @ {self._segment_start_ms}ms", flush=True)
 
     def _on_speech_end(self, segment: np.ndarray):
         """Called when VAD detects speech end."""
@@ -141,14 +236,30 @@ class AudioPipeline:
         self._transcribe_segment(segment, self._segment_start_ms)
 
     def _transcribe_segment(self, segment: np.ndarray, start_ms: int):
-        """Run transcription on a speech segment."""
+        """Run transcription on a speech segment.
+
+        Backpressure: if a previous transcription is still in flight, drop
+        the new segment and increment _dropped_segments. Whisper is the
+        slow step (~200-2000ms); allowing unbounded queueing makes the
+        pipeline lag the user's speech.
+        """
         if len(segment) < 160:
             return
-
-        result = self.transcriber.transcribe(segment, self.sample_rate)
-        if result["text"]:
-            result["start_ms"] = start_ms
-            self.publisher.publish(result)
+        with self._lock:
+            if self._transcribe_inflight > 0:
+                self._dropped_segments += 1
+                return
+            self._transcribe_inflight += 1
+        try:
+            result = self.transcriber.transcribe(segment, self.sample_rate)
+            if result["text"]:
+                result["start_ms"] = start_ms
+                self.publisher.publish(result)
+                with self._lock:
+                    self._segments_transcribed += 1
+        finally:
+            with self._lock:
+                self._transcribe_inflight -= 1
 
     def _on_ptt_trigger(self):
         """Handle push-to-talk trigger."""
@@ -158,9 +269,107 @@ class AudioPipeline:
                 self._transcribe_segment(segment, self._segment_start_ms)
         print("audiod: PTT triggered", flush=True)
 
+    def _cmd_ptt(self) -> dict:
+        """Force-flush the current VAD segment and transcribe it."""
+        segment = self.vad.force_flush()
+        if len(segment) == 0:
+            return {"ok": True, "flushed_samples": 0, "transcribed": False}
+        self._transcribe_segment(segment, self._segment_start_ms)
+        return {
+            "ok": True,
+            "flushed_samples": int(len(segment)),
+            "transcribed": True,
+        }
+
+    def _cmd_start(self) -> dict:
+        """Start the capture loop (idempotent)."""
+        with self._lock:
+            if self._running:
+                return {"ok": True, "already_running": True}
+            self._running = True
+            self._started_at_ms = int(time.time() * 1000)
+        self.capture.start()
+        if self._ptt_trigger:
+            self._ptt_trigger.start()
+        self._process_thread = threading.Thread(
+            target=self._process_loop, name="audiod-process", daemon=True,
+        )
+        self._process_thread.start()
+        return {"ok": True, "started_at_ms": self._started_at_ms}
+
+    def _cmd_stop(self) -> dict:
+        """Stop the capture loop (idempotent, keeps publisher open)."""
+        with self._lock:
+            if not self._running:
+                return {"ok": True, "already_stopped": True}
+            self._running = False
+        self.capture.stop()
+        if self._ptt_trigger:
+            self._ptt_trigger.stop()
+        if self._process_thread is not None:
+            self._process_thread.join(timeout=2.0)
+            self._process_thread = None
+        return {"ok": True}
+
+    def _cmd_restart(self) -> dict:
+        """Stop, then start. Used for recovering from bad state."""
+        self._cmd_stop()
+        return self._cmd_start()
+
+    def _cmd_reload(self) -> dict:
+        """Reload config from disk. Whisper and capture aren't recreated
+        (that requires restart), but vad thresholds, ptt, and publish
+        config are re-read.
+        """
+        # The current process already has its modules instantiated; a
+        # full reload would require re-importing capture/vad/transcription.
+        # For now this is a no-op stub that re-reads the file to surface
+        # parse errors loudly.
+        try:
+            new_cfg = load_config(self._config_path)
+        except Exception as e:
+            return {"ok": False, "error": f"config parse error: {e}"}
+        # Mutable in-process knobs that are safe to flip live:
+        self.config = new_cfg
+        if self.vad is not None and getattr(self.vad, "vad", None) is not None:
+            inner = self.vad.vad
+            if hasattr(inner, "threshold"):
+                inner.threshold = new_cfg.get("vad", {}).get("threshold", inner.threshold)
+        return {"ok": True, "reloaded": True}
+
+    def stats(self) -> dict:
+        """Return a deployment diagnostics snapshot for /status."""
+        with self._lock:
+            return {
+                "running": self._running,
+                "vad_ready": self.vad is not None and self.vad.is_ready(),
+                "device": self.capture.device,
+                "sample_rate": self.sample_rate,
+                "channels": self.capture.channels,
+                "whisper_model": self.transcriber.model_path,
+                "whisper_binary": self.transcriber._bin,
+                "whisper_threads": self.transcriber.threads,
+                "segments_transcribed": self._segments_transcribed,
+                "dropped_segments": self._dropped_segments,
+                "transcribe_inflight": self._transcribe_inflight,
+                "max_segment_ms": self._max_segment_ms,
+                "ptt_enabled": self._ptt_enabled,
+                "ptt_hotkey": self.config.get("push_to_talk", {}).get("hotkey", "space"),
+                "started_at_ms": self._started_at_ms,
+                "uptime_ms": int(time.time() * 1000) - self._started_at_ms,
+                "pid": os.getpid(),
+                "config_path": self._config_path,
+                "publisher": self.publisher.stats(),
+            }
+
     def _process_loop(self):
-        """Main processing loop reading from capture buffer."""
+        """Main processing loop reading from capture buffer.
+
+        Runs on its own thread so the HTTP control plane remains
+        responsive. Exits when _running flips to False.
+        """
         chunk_size = 512  # 32ms at 16kHz
+        max_segment_samples = int(self.sample_rate * self._max_segment_ms / 1000)
 
         while self._running:
             chunk = self.capture.read(chunk_size)
@@ -168,24 +377,35 @@ class AudioPipeline:
                 continue
             self.vad.process(chunk)
 
+            # Watchdog: if VAD has been in speech state for longer than
+            # _max_segment_ms without a silence boundary, force-flush and
+            # transcribe. Prevents runaway buffers from a stuck VAD.
+            if self.vad.is_speaking():
+                held = self.vad.speech_duration_ms()
+                if held > self._max_segment_ms:
+                    with self._lock:
+                        segment = self.vad.force_flush()
+                        start_ms = self._segment_start_ms
+                    if len(segment) > 0:
+                        print(
+                            f"audiod: force-flushing {held}ms segment "
+                            f"({len(segment)} samples)",
+                            flush=True,
+                        )
+                        self._transcribe_segment(segment, start_ms)
+
     def start(self):
-        """Start the audio pipeline."""
-        self._running = True
-        self.capture.start()
+        """Start the audio pipeline (non-blocking).
 
-        if self._ptt_trigger:
-            self._ptt_trigger.start()
-
-        self._process_loop()
+        Spawns a worker thread for the process loop and returns. Use
+        stop() to halt it. The legacy CLI path used to block here; the
+        HTTP control plane depends on the non-blocking behavior.
+        """
+        return self._cmd_start()
 
     def stop(self):
-        """Stop the audio pipeline."""
-        self._running = False
-        self.capture.stop()
-
-        if self._ptt_trigger:
-            self._ptt_trigger.stop()
-
+        """Stop the audio pipeline and close the publisher."""
+        self._cmd_stop()
         self.publisher.close()
 
 
@@ -213,7 +433,7 @@ def main():
         config["audio"]["device"] = args.device
 
     # Setup signal handlers
-    pipeline = AudioPipeline(config)
+    pipeline = AudioPipeline(config, config_path=args.config)
 
     def signal_handler(sig, frame):
         print("\naudiod: stopping", flush=True)
@@ -223,7 +443,7 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    # Start HTTP health server
+    # Start HTTP health + control server
     HealthHandler.pipeline = pipeline
     health_server = start_health_server(args.port)
 

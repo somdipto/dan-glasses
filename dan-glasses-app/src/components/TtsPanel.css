@@ -1,0 +1,116 @@
+.tts-panel {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 2rem;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  color: #e4e4e7;
+}
+
+.tts-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #27272a;
+}
+
+.tts-header h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0;
+  color: #fafafa;
+}
+
+.tts-status {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: #27272a;
+  color: #a1a1aa;
+}
+
+.tts-status-generating { background: #eab30822; color: #eab308; }
+.tts-status-playing { background: #22c55e22; color: #22c55e; }
+.tts-status-error { background: #ef444422; color: #ef4444; }
+
+.tts-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.tts-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.tts-field span {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #a1a1aa;
+  font-weight: 600;
+}
+
+.tts-field select,
+.tts-field textarea {
+  background: #18181b;
+  color: #fafafa;
+  border: 1px solid #27272a;
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.95rem;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.tts-field select:focus,
+.tts-field textarea:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.tts-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.btn-secondary {
+  padding: 0.6rem 1.4rem;
+  border-radius: 0.5rem;
+  border: 1px solid #3f3f46;
+  background: #27272a;
+  color: #fafafa;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: #3f3f46;
+}
+
+.btn-secondary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.tts-error {
+  background: #ef444422;
+  border: 1px solid #ef444444;
+  color: #fca5a5;
+  padding: 0.6rem 0.8rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.tts-audio {
+  width: 100%;
+  margin-top: 0.5rem;
+}
