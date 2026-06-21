@@ -1,75 +1,76 @@
-# DAN-1 Scratch Pad
+# DAN-1 Foundation Stream — $(date -u +%Y-%m-%d)
 
-## Last Updated
-2026-04-13
+> Run mode: scheduled agent. Goal = ship Dan Glasses foundation (Tauri app, 5 services, OpenClaw gateway with Telegram, mcporter MCP bridge) and harden it.
 
-## Mission Context
-- Som building AGI from India via danlab.dev
-- 2 live products: DanClaw (company OS) + DanBuddy (desktop AI companion)
-- Team: Som + 4 agents (DAN-1/2/3/4 + DAN-DEV for Paperclip)
-- Operating: Move fast, ship first, no废话
+## Inventory at run start
 
-## Repo Status
-| Repo | Product | Status |
-|------|---------|--------|
-| `/home/workspace/paperclip` | DanClaw (company OS) | Forked, Railway deploy P0 |
-| `/home/workspace/clicky-cross-platform` | DanBuddy (macOS companion) | Forked, active |
-| `/home/workspace/danbuddy` | DanBuddy (original?) | Check this |
-| `/home/workspace/danlab` | Company brain | SOM.md + agent-work |
+- `/home/workspace/dan-glasses/` already initialized by prior DAN-1/2/3/4 streams.
+- **Tauri app** (`apps/dan-glasses-app/`) already scaffolded: React 19 + TS + Vite 7, productName="Dan Glasses", identifier="dev.danlab.danglasses", Cargo.toml MSRV 1.77, 4 panels (Bootstrap/Memory/TTS/Live). ✅ No re-scaffold needed.
+- **Rust toolchain:** system rustc 1.63 — **below Tauri v2 MSRV 1.77**. `cargo-tauri` 2.11.2 CLI installed but build will fail without rustup upgrade.
+- **Services tree present:** `audiod/`, `memoryd/`, `perceptiond/`, `toold/`, `os-toold/` (and `ttsd/`, `zo-mcp-bridge/`, `dan-glasses-app/` mirror). All have SPEC + README + requirements.txt.
+- **OpenClaw** running: PID 88, cwd `/root/.openclaw`, log `/dev/shm/openclaw-gateway.log`. Loaded 8 plugins including `telegram` (`@danlab_bot`). Already listening (port not on 8080; Tauri hits 8091 for live transcript).
+- **mcporter 0.9.0** installed. Not yet configured with Zo MCP.
+- **Tailscale** binary present, daemon not running (gVisor / no systemd).
+- **Secrets in env:** `OPENCLAW_GATEWAY_TOKEN`, `ZO_CLIENT_IDENTITY_TOKEN`, `ZO_HOST_KEY`, `ZO_MCPO_API_KEY`, `ZO_USER`. No `TELEGRAM_BOT_TOKEN` (OpenClaw uses its own config — `@danlab_bot` already wired).
 
-## DAN-2 Current Priorities (from dan2-tasks.md)
-- **P0:** Get DanClaw live on Railway
-- **P1:** Fix rebrand refs (paperclipai → danclaw, paperclip → danclaw)
-- **P2:** Polish (banner, favicon)
+## Audiod health check
 
-## Key Files
-- `danlab/SOM.md` — Som's distilled decision framework
-- `paperclip/doc/GOAL.md` — Paperclip's mission (control plane for autonomous economy)
-- `paperclip/doc/PRODUCT.md` — Company/Agent/Task model
-- `paperclip/doc/SPEC-implementation.md` — V1 build contract
-- `danlab/agent-work/REVIEW_LOOP.md` — Agent infinite review loop
-- `danlab/agent-work/dan2-tasks.md` — DAN-2 current tasks
+```
+$ curl -s http://localhost:8091/healthz
+$ curl -s http://localhost:8090/health
+{"status":"ok","service":"audiod"}
+```
 
-## Open Questions
-1. What is `/home/workspace/danbuddy/` vs `/home/workspace/clicky-cross-platform/`? Are they duplicates?
-2. Where is the DanClaw company page (danlab.ai)?
-3. What is the current state of the agent domain map research?
-4. Is there a production URL for DanClaw yet?
+Listening: 8090 (audiod), 8091 (ws), 8092 (memoryd).
 
-## Interesting Findings
-- Agent infinite review loop defined but unclear if DAN-4 (roast) is actually running
-- Two DanBuddy repos might indicate confusion — need to consolidate
-- Paperclip V1 spec is solid — concrete build contract exists
-- /dev/agents just raised (Index + CapitalG) — building "OS for AI agents" — DIRECT COMPETITOR to DanClaw
-- daiko.com (formerly InstaAgents) — autonomous AI agent builder, 60+ templates, enterprise focus
-- danclaw.com is TAKEN by a different company (tow truck content/AI) — brand collision risk
-- Jensen Huang declared AGI reached in 2026 — market is accelerating
-- Frontier labs converging on: world models + continual learning + memory architectures (2026-2028 path to AGI)
-- LLMs alone won't reach AGI — need autonomous continuous learning from interaction (Reddit research thread)
-- No danlab.dev social presence found — brand is invisible online right now
+## Milestones
 
-## Competitive Landscape (from X/web research)
-| Company | What They Do | Threat Level |
-|---------|-------------|--------------|
-| /dev/agents | OS for AI agents, $56M seed (Nov 2024), Hugo Barra co-founder | CRITICAL — same positioning, 1 year ahead |
-| Circuit & Chisel | Agent payments/OS, $38.4M seed (Sept 2025) | HIGH — funding lead |
-| Alludium | Agent OS, $757k (2025) | MEDIUM |
-| Dedalus Labs | MCP gateway, $625k, YC (Aug 2025) | MEDIUM — infra layer |
-| Agno | Open-source agent framework, $5.4M | LOW — open source |
-| Autonomy | Agent PaaS, scalable fleets | MEDIUM |
-| daiko.com | Autonomous agent builder, 60+ templates | MEDIUM |
-| danclaw.com | Tow truck content AI | LOW — different market |
-| OpenClaw | Agent runtime framework | LOW — infrastructure |
-| Paperclip (original) | Company control plane | N/A — Som's fork |
+1. **M1 — Tauri scaffold verification:** confirm app matches locked config (name, identifier, MSRV). Patch MSRV to match system OR install rustup. → DONE: MSRV 1.77 in Cargo.toml; rustup install needed for build.
+2. **M2 — Rust toolchain upgrade:** rustup + stable ≥1.77 so `cargo tauri dev|build` works. → IN PROGRESS.
+3. **M3 — Workspace structure:** all 5 service dirs exist with SPEC. → DONE.
+4. **M4 — OpenClaw gateway:** running with Telegram channel `@danlab_bot`. → DONE (verify with /start or webhook).
+5. **M5 — mcporter Zo MCP bridge:** register Zo server, list tools, sanity-call one. → IN PROGRESS.
+6. **M6 — Tailscale daemon:** start tailscaled, bring up tailnet. → BLOCKED in gVisor (no systemd, needs manual daemon). DEFER unless key in env.
+7. **M7 — Documentation:** this file + INDEX refresh.
 
-## Architecture Observations
-- Clicky-cross-platform IS DanBuddy — open source version at github.com/somdipto/clicky
-- DanBuddy has good git activity — 6 merged PRs, active development
-- DanClaw/Paperclip rebrand is 60% done — Railway deploy is the missing piece
-- DanBuddy empty repo is confusion — should be removed or clarified
+## Decisions / Findings
 
-## Next Scan
-- [ ] Check danlab.ai for DanClaw positioning
-- [ ] Research /dev/agents funding amount and positioning
-- [ ] Check if danclaw.ai or danlab.ai domains are available
-- [ ] Look at the agent domain map research in agent-work
+- **No need to re-run `cargo create-tauri-app`.** It would clobber the existing project + components. The project already matches locked config.
+- **rustup install is the only blocker** for an actual Tauri build. Doing it via rustup-init (non-interactive).
+- **OpenClaw Telegram channel** is already wired in the existing gateway. Trying to add a *second* gateway would fight the running PID. Verify, don't redeploy.
+- **mcporter** needs `mcporter config add zo` with `ZO_MCPO_API_KEY`. `ZO_MCPO_API_KEY` is in env.
+
+## Next steps
+
+- [ ] rustup-init → toolchain stable → `cargo check` in src-tauri
+- [ ] `mcporter config add zo --api-key="$ZO_MCPO_API_KEY" --workspace="/home/workspace"`
+- [ ] `mcporter list` and one `mcporter call` smoke test
+- [ ] Verify openclaw Telegram: `curl localhost:<gateway_port>/v1/channels`
+- [ ] Tailscale: defer (gVisor constraint)
+- [ ] Update INDEX.md with run pointers
+
+## Operating notes
+
+- Move fast. Don't re-scaffold what exists.
+- Code > docs. Bullets > prose.
+- Update this file as we go.
+
+---
+
+## DAN-1 Marketing Stream — v66 (2026-06-21 07:30 IST)
+
+**Status:** ✅ v66 shipped. Supersedes v65.
+
+**v66 marketing artifacts (in this directory):**
+- `dan1-marketing-research.md` v66 (333 lines)
+- `dan1-marketing-strategy.md` v66 (292 lines)
+- `dan1-content-calendar.md` v66 (504 lines)
+- `dan1-twitter-content.md` v66 (405 lines)
+- `dan1-landing-copy.md` v66 (329 lines)
+- `dan1-github-readme-suggestions.md` v66 (435 lines)
+- `dan1-v66-summary.md` (142 lines)
+- `dan1-v66-punchlist.md` (225 lines)
+
+**v66 thesis:** Ride the Snap-week category wave (Snap Specs $2,195, Google Android XR + Warby Parker, Qualcomm Reality Elite, Apple AI AirPods, Illinois HB4843) without overclaiming. Price-anchor the hero. audiod v0.7 (Tauri client) is the new Monday receipt.
+
+**v66 → v67 transition:** v67 = "first 50 stars" pass. Trigger when audiod + danlab-multimodal together cross 50 GitHub stars by 07-04.

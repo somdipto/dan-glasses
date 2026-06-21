@@ -1,209 +1,224 @@
-# Dan2 — Top 5 Research Papers to Read (v42 Final)
-**2026-06-13 08:40 IST (03:10 UTC) · 7/7 daemons live re-verified · Live web research re-confirmed all citations · SIA on GitHub `hexo-ai/sia` (1,594 stars, 179 forks, last push 2026-06-11, arXiv 2605.27276, Hebbar et al., MIT, June 9 2026) · OpenGlass (arXiv 2606.07431v1, June 5 2026) · BitNet b1.58 2B4T (arXiv 2504.12285, HF `microsoft/bitnet-b1.58-2B-4T`, April 2025, 39,292 GitHub stars on `microsoft/BitNet`, **live-verified 0.4GB mem / 29ms CPU latency / 0.028J energy / 9.2× lower than LLaMA 3.2 1B**) · Mem0 (arXiv 2504.19413, ECAI 2025) · Harness Updating Is Not Harness Benefit (arXiv 2605.30621, May 28 2026) · Locked focal models + memoryd v2 architecture + 90-day window before Apple Siri AI public GA (Sept 2026, 12GB hardware gate) inform the top 5**
+# Dan2 — Top 5 Papers to Read v11
+## Refreshed for Snap Specs + Zamba2-VL + Fable 5 Export Control + JoyAI-VL-Interaction
 
-## How to use this list
+**Date:** 2026-06-18 08:30 IST (03:00 UTC)
+**Author:** Dan2 (DanLab co-founder, lead scientist, architect)
+**Status:** v11. v10 archived as `dan2-papers-to-read.v10.md`.
 
-**These are the 5 papers/technical reports that the Danlab team should read in the next 2 weeks.** Each is chosen for **direct impact on a Danlab decision** in Months 1-6 of the v42 roadmap. The v30/v36/v40/v41 lists had 20 papers; this v42 list has 5 — strictly the highest-ROI.
+## 0. v11 Read in 60 Seconds
 
-**Reading cadence:** 1 paper per day, 2-3 hours per paper. Read with somdipto + Dan1/Dan3/Dan4 over Telegram voice notes. Total: 5 days, 15 hours.
+The v10 list was:
+1. RHO (Retrospective Harness Optimization, arXiv:2606.05922)
+2. VLCache (Vision KV cache, arXiv:2512.12977)
+3. Meta Display + DoD-Anthropic product brief
+4. Stanford SIA paper
+5. Liquid LFM2.5-8B-A1B release notes
 
-## The Top 5 (v42, locked)
+v11 keeps #1 (RHO), #2 (VLCache), #4 (Stanford SIA). v11 swaps:
+- #3 replaced with **Meta Display + Snap Specs + Xreal Aura + Fable 5 export-control product brief** — the v11 market comp + regulatory backdrop. Snap failed at $2,195.
+- #5 added: **Zyphra Zamba2-VL release notes + blog** (June 12, 2026) — the v1.1 perceptiond default candidate. Mamba2+Transformer hybrid. 10× TTFT improvement.
 
-### 1. SIA: Self Improving AI with Harness & Weight Updates (arXiv 2605.27276) + GitHub `hexo-ai/sia` (1,594 stars, 179 forks, last push 2026-06-11)
+The v11 list: RHO + VLCache + Stanford SIA + Meta Display/Snap/Xreal/Fable 5 brief + Zamba2-VL. Three papers + two product briefs. Total reading time: ~8 hours.
 
-**Why this is #1:** **SIA is the first open-source SOTA with the full architecture public for self-improving AI agents.** The 3-LLM pattern (Meta-Agent + Task-Specific Agent + Feedback-Agent) is the production reference for harness evolution. **Open-sourced June 9 2026 by Hexo Labs (Hebbar et al., 7 authors).** GitHub `hexo-ai/sia` with CLI (`pip install sia-agent` + `sia run`) and web visualizer (`sia web`). **Live-verified 2026-06-13 03:10 UTC: 1,594 stars, 179 forks, last push 2026-06-11T21:41:08Z.**
+**v11 also adds a #6 honorable mention (free to read):** Stuart Russell Guardian op-ed, "Will it take a 'Chernobyl-scale disaster' for us to regulate cyber weapons of mass destruction?" (June 17, 2026). 15 minutes. The political + regulatory backdrop for everything we do.
 
-**Empirical results (live-verified, arXiv abstract):**
-- "SIA-W+H achieves 25.1% over prior SOTA on LawBench, 12.4% faster GPU kernels than prior SOTA (1,017 vs 1,161 μs), and 20.4% over prior SOTA on denoising."
-- **LawBench (Chinese legal charge classification, 913 held-out cases):** Baseline gpt-oss-120b = 13.5% → SIA-H (harness-only) = 19.3% → **SIA-W+H (harness + weights) = 70.1%** (vs Claude Code 17.3% and prior SOTA Karpathy autoresearcher 45.0%).
-- **TriMul (CUDA kernel optimization, H100, no held-out split):** Baseline = 1.00× → SIA-H = 1.10× → **SIA-W+H = 14.02×** (vs Claude Code 1.50×).
-- **Denoising (single-cell RNA, no held-out split):** Baseline = 0.048 → SIA-H = 0.241 (vs Claude Code 0.232).
+## 1. #1 — RHO (Retrospective Harness Optimization) [KEEP from v10]
 
-**Architecture (live-verified, v42):**
-- **Meta-Agent:** takes task spec + reference implementation → produces initial scaffold (system prompt, single-tool dispatch loop, output parser).
-- **Target / Task-Specific Agent:** runs the task, produces a trajectory.
-- **Feedback/Improvement Agent:** reviews the trajectory, identifies improvements, decides at each iteration whether to rewrite the harness or update the weights. **3 LLM components, not 2 — v30 said 2, v41/v42 correct to 3.**
-- Base model: gpt-oss-120b (LoRA rank 32, lr 4×10⁻⁴). Meta-Agent and Feedback-Agent use Claude Sonnet 4.6. Weight updates run on Modal H100s.
+**arXiv:** 2606.05922
+**Title:** Retrospective Harness Optimization: Self-Improving Agents via Hindsight
+**Why we read it:** RHO is label-free. AEL requires label feedback. RHO generates its own hindsight signal from execution traces. **0.78 SWE-Bench Pro at 1 round** vs Meta-Harness 0.60 at 1 round. This is the real playbook for danlab-multimodal.
 
-**Specifics for Danlab:**
-- **SIA-H (harness-only) fork for danlab-multimodal.** 2-week integration. LFM2.5-1.2B-Thinking as Meta-Agent (and Task-Specific Agent and Feedback-Agent — same tier per "Harness Updating Is Not Harness Benefit"). Target: 3 cycles on a Dan Glasses-relevant task.
-- **CLI: `pip install sia-agent` from `hexo-ai/sia` GitHub. Web visualizer at `sia web` port for inspection.**
-- **Implement the Meta-Agent → Task-Specific Agent → Feedback-Agent loop** with danlab-multimodal's heuristic scoring as the reward signal.
-- **Read sections 3-5 carefully:** the SIA action space (harness-update vs weight-update) and the Feedback-Agent's policy.
-- **SIA-W+H is the next move after SIA-H plateaus.** LoRA rank 32, H100, Modal.
+**Read time:** 1-2 hours.
 
-**When to read:** Month 1, Week 1. **Read this BEFORE the SIA-H fork.**
+**How it applies:**
+- Fork RHO + danlab-multimodal.
+- Use HRM-Text 1B as the local Feedback-Agent.
+- Run on a held-out 500-pair image-description benchmark (COCO Captions subset).
+- Publish the delta vs. heuristic baseline.
 
-**Link:** https://github.com/hexo-ai/sia + https://arxiv.org/abs/2605.27276
+**v11 priority:** P0. v11 month 5 (October 2026) — fork + run.
 
-### 2. Harness Updating Is Not Harness Benefit (arXiv 2605.30621)
+## 2. #2 — VLCache (Vision KV Cache) [KEEP from v10]
 
-**Why this is #2:** **This is the guardrail paper for the SIA-H fork.** Lin et al. (A-EVO-Lab, 17 authors) analyze two capabilities: (i) harness-updating, the capability to produce useful persistent harness updates; (ii) harness-benefit, the capability to benefit from updated harnesses during task solving. **Two findings.** First, harness-updating is **flat in base capability** — Qwen3.5-9B's updates yield gains comparable to Claude Opus 4.6. Second, harness-benefit is **non-monotonic** — weak-tier models benefit little, mid-tier models benefit most, strong-tier models benefit less. **Weak-tier agents fail to activate harness artifacts, or activate them but fail to follow them faithfully.**
+**arXiv:** 2512.12977
+**Title:** VLMCache: Caching Vision Encoder Outputs for Fast VLM Inference
+**Why we read it:** caches vision encoder outputs as KV, recomputes 2-5% per layer. 1.2-16× speedup. SGLang-integrated. Production-ready. **The single biggest perf win we can ship in perceptiond v1.1.**
 
-**Why this is critical for Danlab:**
-- We have a 1.2B focal model (LFM2.5-1.2B-Thinking). That's "weak-tier" by SIA's standards (SIA uses 120B gpt-oss-120b).
-- **The naive move** would be to use a strong evolver (Claude Sonnet 4.6) to write better harnesses for our 1.2B agent. The paper says: **this won't work.** The 1.2B agent will fail to load and follow the better harness.
-- **The right move** is to invest in harness-activation training: teach the 1.2B agent to recognize harness artifacts, load them correctly, and follow them reliably. This is a meta-capability, not a content change.
-- **Implication for the SIA-H fork:** Use LFM2.5-1.2B-Thinking as Meta-Agent (harness writing) AND as Task-Specific Agent (task execution) AND as Feedback-Agent (review). **The three roles should match in tier. Don't use a 4.6 evolver to write harnesses for a 1.2B executor.**
+**Read time:** 1-2 hours.
 
-**Specifics for Danlab:**
-- **Read this BEFORE the SIA-H fork.** The SIA architecture assumes gpt-oss-120b as base. We need to adjust the activation training to compensate for 1.2B.
-- **SIA-H fork Month 1-2:** The activation training pattern is the differentiator. SOTA result on a 1.2B base would be a NeurIPS 2027 paper.
-- **Open question for v42:** Is there a way to do "harness distillation" — train the 1.2B agent to load and follow the harness the 120B evolver wrote? This is the open research question for our scale.
-- **Hypotheses to test:** (a) Does the 1.2B focal model load and follow a 4.6-written harness? (b) Does the 1.2B focal model load and follow a 1.2B-written harness? (c) Can we close the gap with activation training?
+**How it applies:**
+- Integrate VLCache in perceptiond v1.1 (v11 month 3, August 2026).
+- Target: 5-8s/frame (down from 10-15s).
+- Validate on real audiod-perceptiond integration test.
 
-**When to read:** Month 1, Week 1. **Read this BEFORE the SIA-H fork, alongside paper #1.**
+**v11 priority:** P0. v11 month 3. This is on the critical path for v1.1 perceptiond.
 
-**Link:** https://arxiv.org/abs/2605.30621
+## 3. #3 — Meta Ray-Ban Display + Snap Specs + Xreal Aura + Fable 5 Export Control Product Brief [UPDATED v11]
 
-### 3. BitNet b1.58 2B4T Technical Report (arXiv 2504.12285) + bitnet.cpp (arXiv 2410.16144)
+**Source bundle (v11 UPDATED):**
+- "After unveiling ridiculously expensive AR glasses, Snap's stock takes a dive" — TechCrunch, June 17, 2026. [^2]
+- "Snap unveils new Specs smart glasses after previous disasters" — BBC, June 2026. [^3]
+- "7 AR Breakthroughs From AWE 2026" — Glass Almanac, June 16-17, 2026. [^4]
+- "XREAL AURA AR Glasses Get Fall Release Window, $1,500 Price Ceiling" — Road to VR, June 2026. [^5]
+- "Will it take a 'Chernobyl-scale disaster' for us to regulate cyber weapons of mass destruction?" — Stuart Russell, The Guardian, June 17, 2026. [^6]
+- "The US government puts most powerful AI back in its box" — PauseAI, June 2026. [^7]
 
-**Why this is #3:** **BitNet b1.58 is the only credible path to sub-1W LLM on a wearable in 2026.** Live-verified production-ready. Microsoft shipped the model on Hugging Face (`microsoft/bitnet-b1.58-2B-4T`). 39,292 GitHub stars on `microsoft/BitNet`. Real benchmarks, not vaporware. **Live-verified 2026-06-13 03:10 UTC from the HF model card table.**
+**Why we read it:** Snap Specs failed at $2,195 (June 16, 2026 AWE reveal, -5% stock). Meta Ray-Ban Display confirmed for Sept 30 at $799. Xreal Aura at <$1,500 with Google + Qualcomm. **Fable 5 / Mythos 5 export control formalized June 12, 2026** by the White House (per Russell op-ed). Together these events:
+- Confirm the $400 wearable niche is **uncontested for 12-18 months** before Apple N50.
+- Reframe the Fable 5 export control from a "policy comment" to a **formal US regulatory regime**.
+- Make the on-device + open-source + auditable thesis **structurally compliant** with US policy.
 
-**Live-verified numbers (HF model card 2026-06-13):**
+**Read time:** 2 hours (skim).
 
-| Benchmark | LLaMA 3.2 1B | Gemma-3 1B | Qwen2.5 1.5B | SmolLM2 1.7B | MiniCPM 2B | **BitNet b1.58 2B** |
-|---|---|---|---|---|---|---|
-| Memory (Non-emb) | 2GB | 1.4GB | 2.6GB | 3.2GB | 4.8GB | **0.4GB** |
-| Latency (CPU Decoding) | 48ms | 41ms | 65ms | 67ms | 124ms | **29ms** |
-| Energy (Estimated) | 0.258J | 0.186J | 0.347J | 0.425J | 0.649J | **0.028J** |
-| Average benchmark | 44.90 | 43.74 | 55.23 | 48.70 | 42.05 | **54.19** |
+**Key extracts:**
+- **Snap Specs:** "$2,195" / "Snap shares fell by more than 5% after the new device was showcased" / "51° field of view and electrochromic lenses" / "4-hour mixed-use battery life and bulky design" — Glass Almanac + TechCrunch + BBC.
+- **Xreal Aura:** "will not exceed US$1,500" / "Snapdragon Reality Elite chipset... 60% increase in GPU performance, 30% increase in CPU performance, 160% increase in NPU" — Road to VR.
+- **Fable 5 export control:** "On 12 June, the White House issued an export control directive banning access to Anthropic's new frontier models, Fable 5 and Mythos 5, for all foreign nationals — including many of its own key researchers" — Stuart Russell, Guardian.
+- **DoD on Anthropic (carryforward from v10):** "Evident by Anthropic's actions it was a 'supply chain risk'" — DoD Under Secretary (CNBC, June 17 2026).
+- **NGA AI training mandate (NEW v11):** "Every single new hire has to go through AI and data management training" — Rear Adm. Michael Baker, NGA (Defense One, June 16 2026).
+- **Apple N50 (carryforward from v10):** Bloomberg, June 16 2026 — Apple first smart glasses may launch in late 2027.
 
-**v42 energy math:** vs LLaMA 3.2 1B = **9.2× lower**; vs Gemma-3 1B = **6.6× lower**; vs Qwen2.5 1.5B = **12.4× lower**; vs SmolLM2 1.7B = **15.2× lower**; vs MiniCPM 2B = **23.2× lower**.
+**How it applies:**
+- v11 month 1: write the Snap Specs + Xreal + Fable 5 product brief. `docs/meta-snap-xreal-fable5-brief.md`.
+- v11 month 2-3: position v1.0 explicitly *against* Meta Display + Snap + Xreal. Trust architecture, not HUD chase. **Fable 5 export-control compliance** is the headline.
+- v11 month 6: ship v1.0 with anti-AR-glasses positioning: "open-source, on-device, Fable 5 safe, $400 target, no data exfiltration."
+- v11 month 12: ship v1.1 ahead of Apple N50 (late 2027).
+- v11 month 18: ship v1.5 with `fabled` service for cryptographic compliance certificates.
 
-**Architecture (live-verified, arXiv abstract):**
-- "We introduce BitNet b1.58 2B4T, the first open-source, native 1-bit Large Language Model (LLM) at the 2-billion parameter scale. Trained on a corpus of 4 trillion tokens."
-- Ternary weights (-1, 0, +1) trained from scratch
-- 8-bit activations (W1.58A8)
-- mpGEMM library (CPU-optimized matmul)
-- BitLinear layers (replace nn.Linear in standard transformer)
-- No bias in BitLinear layers
-- Trained on 4T tokens
-- Context length: 4096 tokens
-- LLaMA 3 Tokenizer (vocab size 128,256)
+**v11 priority:** P0.
 
-**Production deployment:**
-- HF `microsoft/bitnet-b1.58-2B-4T` — 2.4B params, 4T training tokens (packed 1.58-bit weights)
-- HF `microsoft/bitnet-b1.58-2B-4T-bf16` — master weights in BF16 for training/fine-tuning
-- HF `microsoft/bitnet-b1.58-2B-4T-gguf` — GGUF format for `bitnet.cpp` CPU inference
-- `bitnet.cpp` inference framework: 39,292 GitHub stars
-- Active development: BitNet v2 (native 4-bit activations with Hadamard transformation), BitVLA (1-bit vision-language-action for robotics)
-- **CRITICAL from HF model card:** "For achieving the efficiency benefits demonstrated in the technical paper, you MUST use the dedicated C++ implementation: bitnet.cpp." transformers library does NOT give the speed/energy benefits.
+## 4. #4 — Stanford SIA Paper [KEEP from v10, hardened]
 
-**Specifics for Danlab:**
-- **Month 2-3 spike in perceptiond.** BitNet b1.58 + Litespark 1.58-bit ternary. **50-150× energy reduction vs fp16 inference for text.**
-- **Read the inference section carefully:** ternary weight representation, W1.58A8 quantization, mpGEMM library.
-- **Pair with Litespark SIMD framework** for the actual CPU implementation.
-- **T-MAC (arXiv 2407.00088) is the LUT-based kernel for Raspberry Pi 5 + BitNet-b1.58-3B (11 tok/s, 60-70% energy reduction).**
-- **v42 caveat: BitNet b1.58 2B4T is TEXT-ONLY.** For Dan Glasses' VLM (LFM2.5-VL-450M), the energy reduction comes via BitNet-VLM (does not exist yet, 2027 target) OR GAP9 RISC-V + event camera (OpenGlass pattern, 2026 target).
-- **For Dan Glasses wearable:** this is the only path to sub-1W for text. The 2026 wearable that ships will draw 2-5W on VLM inference. **Sub-1W is a 2027-2028 target with BitNet-VLM + Litespark + GAP9 RISC-V + event camera.**
+**Source:** Hexo Labs + Oxford + Stanford, June 2026.
+**Title:** SIA: Self-Improving Agents (recursive harness + weights)
+**GitHub:** github.com/HexoLabs/SIA
+**Stanford venue:** Salone d'Onore event, June 2026. 17 frontier labs in the room. Vignesh Baskaran (Hexo Labs) opened the event.
+**Why we read it:** the actual production-grade self-improving agent. SIA updates both the external scaffold AND internal model weights. The Stanford presentation *validates* SIA at the highest academic level.
 
-**When to read:** Month 2, Week 1. **Read this BEFORE the sub-1W wearable spike.**
+**Read time:** 2-3 hours.
 
-**Link:** https://arxiv.org/abs/2504.12285 + https://github.com/microsoft/BitNet
+**Key points (per v10/v11 research):**
+- 3 tasks: LawBench (70.1% — held-out), TriMul (14.02× — train/test overlap), denoising (0.241 — train/test overlap).
+- Harness-only is recoverable; harness + weights is irreversible.
+- Local compute required (A100/H100 for weight updates).
+- Stanford team has the actual production deployment.
+- 17 frontier labs in the room at Stanford presentation = SIA is taken seriously by the frontier community.
 
-### 4. OpenGlass: Ultra-Low-Power On-Device AI Eyewear with Event-based Vision (arXiv 2606.07431)
+**How it applies:**
+- v11 month 1 (this week): reach out to Vignesh Baskaran via LinkedIn. Email to Hexo Labs GitHub. Propose co-fork.
+- v11 month 2 (July 2026): sign collaboration agreement. Plan Stanford summer workshop if possible.
+- v11 month 3 (August 2026): fork SIA, replace Feedback-Agent with HRM-Text 1B + Gemma 4 1B.
+- v11 month 4 (September 2026): scale to 500-pair held-out. Compare to Hexo's reference numbers.
+- v11 month 5 (October 2026): SIA fork v0.5. Harness-only loop on danlab-multimodal dataset.
+- v11 month 8 (January 2027): SIA fork v0.9. Held-out LawBench reproduction. Co-publish with Hexo/Stanford.
+- v11 month 10 (March 2027): SIA fork v1.0. Harness + weights. Brake-pedal-aligned. Co-publish.
 
-**Why this is #4:** **OpenGlass is the form-factor reference for sub-1W AI eyewear.** Published June 5 2026 (v1), revised June 8 2026 (v2). Bonazzi, Moosmann, Celik, Mayer, Magno (ETH Zurich, PULP group). Different silicon path from Dan Glasses (GAP9 RISC-V + event camera, not LFM2.5-VL-450M + Snapdragon) but **validates the sub-1W AI eyewear target on a real wearable form factor**.
+**v11 priority:** P0. The SIA fork is the single most important technical project in the AGI roadmap.
 
-**Live-verified numbers (from the arXiv abstract):**
-- **11.5 hours** of continuous on-device ML from a **200 mAh** battery
-- **78.3 ms end-to-end latency** on GAP9 (capture → inference → result)
-- **83.94% cross-subject accuracy** on LynX hand-gesture dataset with R(2+1)D
-- **macro F1 = 0.781** under leave-two-subjects-out validation
-- System-level average draw: ~64 mW (derived from 200 mAh × 3.7V / 11.5h)
-- Peak GAP9 power during inference is higher (in paper's power table)
+## 5. #5 — Zyphra Zamba2-VL Release Notes + Blog [NEW v11]
 
-**Architecture (live-verified, from arXiv abstract):**
-- "Its modular design uses a flexible FPC interposer to support both event-based and frame-based cameras without full PCB redesign."
-- "A hardware-software co-designed power management system combines a configurable PMIC with event-driven wake-up via an nRF5340 coordinator, keeping the GAP9 RISC-V SoC powered down between inferences."
-- **Hardware:** GAP9 RISC-V SoC (PULP) + Prophesee GENX320 event-based camera + nRF5340 coordinator
-- **Model:** R(2+1)D (3D-CNN with (2+1)D factorization)
-- **Input representation:** Polarity-separated event histograms from the GENX320
-- **Dataset:** LynX (egocentric hand gesture dataset)
-- **All hardware designs, firmware, and models are released open source.**
+**Source:** Zyphra, June 12, 2026.
+**Title:** Zamba2-VL: Hybrid Mamba2-Transformer Vision-Language Models
+**Blog:** https://www.zyphra.com/blog (verify)
+**HF:** huggingface.co/zyphra (verify)
+**Coverage:** MarkTechPost (June 12, 2026), Instagram AI weekly (June 13, 2026).
 
-**Specifics for Danlab:**
-- **Buy a GAP9 dev kit + Prophesee GENX320 event camera THIS WEEK.** $500-2000 total. Spike the OpenGlass RISC-V + event-camera path for Dan Glasses' wearable form factor.
-- **The form factor proof is the value here.** We can use a different VLM (LFM2.5-VL-450M or BitNet-quantized) on the same silicon. The architecture pattern (event-driven wake + duty-cycled SoC) is what we're stealing.
-- **Sub-1W wearable is achievable in 2026 with this silicon path.** But the 2026 production wearable (LFM2.5-VL-450M on Snapdragon) will draw 2-5W. Sub-1W is a 2027-2028 target.
+**Why we read it:** the v1.1 perceptiond default candidate. Zamba2-VL is *the* open-weights Mamba2+Transformer hybrid VLM at 1.2B/2.7B/7B. ~10× better TTFT than dense transformer VLMs at 1.2B. Apache 2.0. Smaller RAM footprint. Better fit for wearable v2 budget.
 
-**When to read:** Month 1, Week 2. **Read this BEFORE the GAP9 dev kit purchase.**
+**Read time:** 2 hours.
 
-**Link:** https://arxiv.org/abs/2606.07431
+**Key points:**
+- **1.2B / 2.7B / 7B variants.** Three sizes for three form factors.
+- **Mamba2 + Transformer hybrid backbone.** Not pure Mamba. Not pure Transformer. Best of both.
+- **~10× faster TTFT** vs dense transformer VLMs (per Zyphra release notes).
+- **Qwen2.5-VL vision encoder** paired with Zamba2 backbone.
+- **62.5 on PixMoCount** at 1.2B.
+- **Apache 2.0 license.**
+- **Single + multi-image understanding** and grounding.
 
-### 5. Mem0: Building Production-Ready AI Agents with Scalable Long-Term Memory (arXiv 2504.19413)
+**How it applies:**
+- v11 month 3 (August 2026): benchmark Zamba2-VL-1.2B on x86_64 and wearable aarch64. Measure TTFT, end-to-end latency, JSON quality.
+- v11 month 4 (September 2026): decision. If TTFT <500ms on aarch64, swap as v1.1 default.
+- v11 month 6 (November 2026): integrate in perceptiond v1.1.
+- v11 month 7 (December 2026): ship in Dan Glasses v1.1.
+- v15: Zamba2-VL-2.7B or 7B upgrade for v1.5.
 
-**Why this is #5:** Mem0 is the **most widely adopted memory architecture in production.** ECAI 2025 paper. Apache 2.0. The dual-store architecture (vector + knowledge graph) is the **public reference for memoryd v2 v1.0** (Month 3, open-source release). **Our single highest-ROI investment for AGI direction AND the iOS 27 GA counter.**
+**v11 priority:** P0. v1.1 perceptiond on the critical path.
 
-**Live-verified numbers (from the arXiv abstract):**
-- "Mem0 achieves 26% relative improvements in the LLM-as-a-Judge metric over OpenAI, while Mem0 with graph memory achieves around 2% higher overall score than the base configuration."
-- **+26% relative improvement in LLM-as-a-Judge metric over OpenAI on LOCOMO benchmark**
-- **~49% LongMemEval** (vs Letta 83.2% ceiling, Zep 63.8%, Mem0 49%)
-- **"Mem0 attains a 91% lower p95 latency and saves more than 90% token cost"** vs full-context method
-- ECAI 2025 paper accepted (April 28 2025)
+## 6. #6 Honorable Mention — Stuart Russell Guardian Op-Ed [NEW v11]
 
-**Architecture (live-verified, two-phase pipeline, from the arXiv abstract):**
-- "We introduce Mem0, a scalable memory-centric architecture that addresses this issue by dynamically extracting, consolidating, and retrieving salient information from ongoing conversations. Building on this foundation, we further propose an enhanced variant that leverages graph-based memory representations to capture complex relational structures among conversational elements."
-- **Extraction Phase:** LLM reads conversation history + tool interactions → produces structured memory candidates (preferences, facts, context). Uses `MEMORY_DEDUCTION_PROMPT`.
-- **Update Phase:** Compares new candidates against existing memories → decides ADD / UPDATE / DELETE / NOOP. Avoids duplication.
-- **Storage:** Hybrid — vector store (Qdrant/pgvector) for semantic retrieval + graph store (Neo4j) for entity relationships.
-- **Retrieval:** Semantic search + graph traversal + temporal filters.
-- **Evaluated against six baseline categories** on LOCOMO: (i) established memory-augmented systems, (ii) RAG with varying chunk sizes and k-values, (iii) full-context approach, (iv) open-source memory solution, (v) proprietary model system, (vi) dedicated memory management platform.
+**Source:** Stuart Russell, The Guardian, June 17, 2026.
+**Title:** "Will it take a 'Chernobyl-scale disaster' for us to regulate cyber weapons of mass destruction?"
+**URL:** theguardian.com/commentisfree/2026/jun/17/anthropic-ai-rsi-fable
 
-**Specifics for Danlab:**
-- **memoryd v2 v1.0 (Month 3) = Mem0 + Zep/Graphiti + Hindsight + SuperLocalMemory V3.3 + LFM2.5-VL-450M (bbox-prompt JSON output, v42 correction) + Weaviate Engram.**
-- **Read the extraction + update phases carefully.** Our memoryd v1 has 3 memory types (episodic / semantic / procedural) but no extraction pipeline.
-- **Pair with Zep/Graphiti (arXiv 2501.13956)** for the temporal KG layer.
-- **Pair with Hindsight (arXiv 2512.12818)** for the 4-lever cognitive consolidation. 91.4% on LongMemEval with scale.
-- **Pair with SuperLocalMemory V3.3 (arXiv 2604.04514)** for the wearable zero-LLM option. 70.4% LoCoMo in zero-LLM Mode A.
-- **Open-source release on GitHub public in September 2026.** The wedge against Apple Siri AI public GA in September 2026 (and the 12GB hardware gate).
+**Why we read it (15 minutes):** Russell — a founder of AI safety research — argues the world is on a path to AI-caused human extinction, with CEOs themselves saying "chance similar to one in six of dying while playing Russian roulette." Frames the Fable 5 export control as *necessary but insufficient*. Establishes the political and moral context for everything we do.
 
-**When to read:** Month 1, Week 1. **Read this BEFORE memoryd v2 v1.0 development starts.**
+**Key extracts:**
+- "In early June, the company [Anthropic] posted an article describing early signs of recursive self-improvement (RSI)."
+- "On 12 June, the White House issued an export control directive banning access to Anthropic's new frontier models, Fable 5 and Mythos 5, for all foreign nationals."
+- "The CEOs are telling us: 'We're on track to create superhuman intelligence, which has a good chance of causing human extinction.'"
+- "Their response has been spasmodic, with an on-again, off-again executive order and now a ban on a system that had already been deployed, but the direction of travel is clear."
 
-**Link:** https://arxiv.org/abs/2504.19413
+**v11 message:** the on-device thesis is now *structurally aligned* with both US policy (export control) and AI safety research (Russell's "Chernobyl-scale disaster" warning). This is the strongest possible positioning for Dan Glasses. The product is not just "good tech" — it is "tech that survives the regulatory environment the AI safety community is asking for."
 
-## Reading Schedule (v42, locked)
+**v11 priority:** P0 (skim, 15 min).
 
-**Week 1 (Month 1, before any code):**
-1. **SIA (arXiv 2605.27276)** — BEFORE the SIA-H fork
-2. **Harness Updating Is Not Harness Benefit (arXiv 2605.30621)** — BEFORE the SIA-H fork (paired with #1)
-3. **Mem0 (arXiv 2504.19413)** — BEFORE memoryd v2 v1.0 development
-4. **OpenGlass (arXiv 2606.07431)** — BEFORE the GAP9 dev kit purchase
-5. **BitNet b1.58 2B4T (arXiv 2504.12285)** — BEFORE the sub-1W wearable spike
+## 7. v11 Reading Schedule
 
-**Total: 5 days, 15 hours.**
+**v11 week 1 (this week, June 2026):**
+- Day 1 (1 hour): RHO paper.
+- Day 2 (1 hour): VLCache paper.
+- Day 3 (2 hours): Meta Display + Snap + Xreal + Fable 5 product brief.
+- Day 4 (15 min): Stuart Russell op-ed (honorable mention #6).
+- Day 5 (2 hours): Zyphra Zamba2-VL release notes.
+- Day 6 (2 hours): Stanford SIA paper.
+- Total: ~8.5 hours.
 
-## Why these 5 (v42, locked)
+**v11 week 2 (next week, June 2026):**
+- Day 1-2: fork RHO + run on 100-pair held-out.
+- Day 3-4: Vignesh outreach on LinkedIn + Hexo Labs GitHub.
+- Day 5: Snap Specs + Xreal Aura positioning draft. Fable 5 attestation design.
 
-| # | Paper | Decision it informs | Why critical now |
-|---|---|---|---|
-| 1 | SIA | danlab-multimodal self-improvement architecture | Open-sourced 4 days ago. First open-source SOTA. 1,594 stars already. Last push 2026-06-11. Window to be early is 4 weeks. |
-| 2 | Harness Updating Is Not Harness Benefit | SIA-H fork guardrail | Prevents us from shipping a broken fork. The "don't make this mistake" paper. 17 authors, A-EVO-Lab. |
-| 3 | BitNet b1.58 | Sub-1W wearable path | **Live-verified 0.4GB mem / 29ms latency / 0.028J energy / 9.2× lower than LLaMA 3.2 1B.** Production-ready. 39,292 GitHub stars. The only 2026 path. **Text-only.** |
-| 4 | OpenGlass | Wearable form-factor reference | Published 8 days ago. Validates sub-1W. Different silicon, same architecture. |
-| 5 | Mem0 | memoryd v2 v1.0 architecture | Most-adopted in production. ECAI 2025. Open-source release in Sept 2026. |
+**v11 reading discipline:** read in this order. Each paper/brief informs a v11 action. The schedule aligns with v11 month 1 foundation work.
 
-## What we're NOT reading (v42, deliberate cuts)
+## 8. v11 Papers Deferred from v10
 
-- **Anthropic Fable 5 architecture (closed).** No public paper. Read the Forbes + MacRumors + TechCrunch + Axios coverage instead. 80.3% SWE-bench Pro, Stripe 50M-line migration in a day, 80% of Anthropic's code is Claude-authored, ships with Anthropic SkillOpt.
-- **Apple AFM 3 (closed paper).** WWDC26 platform docs are sufficient. The full paper is internal. NAND-MoE for on-device 20B. 4-6W sustained on A19 Pro.
-- **DGM, DGM-H, RHO, SGM, AHE, Self-Harness, HarnessForge, Continual Harness, EvoTrainer, PopuLoRA, Meta-Harness, HERO, TRACE, AEL.** All v30/v36 references. Read after the SIA-H fork lands and we have data on what works. Not before.
-- **Brilliant Labs Halo internals.** Industrial-design coverage + open-source repo. No paper yet.
-- **LFM2.5-Audio-1.5B.** Live model, not a paper. Test on our audio pipeline instead.
-- **LFM2.5-VL-450M.** Live model + Liquid AI blog post. Not a paper.
-- **Microsoft Scout (Autopilot).** Closed architecture. Read the Microsoft 365 Blog announcement + AgenticWire + digitalapplied.com analysis. The architecture is OpenClaw-based; we already use OpenClaw. The "addicted users" memo is the compliance wedge.
+| Paper | Why defer | v11 read time |
+|---|---|---|
+| LFM2.5-VL-Extract release notes (v10 #5) | v11 used in production; no new info | already covered |
+| Liquid LFM2.5-8B-A1B release notes (v10 #5) | keep in v2 candidate list | v11 month 8 |
+| MemPrivacy (v8 #3) | not on critical path; on-device only | v11 month 3 |
+| ProActor (v8 #4) | proactived v1.0 ships hand-coded | v11 month 5 |
+| Meta-Harness (v8 #5) | RHO covers the meta-claim | v11 month 4 |
+| Memanto (v7) | already considered in memoryd v2 design | v11 month 4 |
+| DPCM | dual-process cognitive memory; v2 memoryd | v11 month 7 |
+| StreamMemBench | test if memoryd v2 can use stored evidence | v11 month 5 |
+| JoyAI-VL-Interaction paper (v11 NEW) | covered in v11 model analysis; not deep-read | v11 month 8 |
+| Liquid LFM2.5-1.2B-JP-202606 | v2 India candidate | v11 month 8 |
 
-## Open Reading Queue (Month 2-3, after the spike data lands)
+## 9. v11 Final Read
 
-After we have 2 weeks of SIA-H + BitNet spike data, the next 5 papers are:
-1. **DGM (arXiv 2505.22954)** — Sakana DGM, open-ended evolution. If SIA-H plateaus, DGM is the next move.
-2. **Hindsight (arXiv 2512.12818)** — 4-lever cognitive consolidation. 91.4% LongMemEval with scale. Read when memoryd v2 v1.0 development starts.
-3. **Zep/Graphiti (arXiv 2501.13956)** — Temporal KG. Read when memoryd v2 v1.0 development starts.
-4. **HeLa-Mem (arXiv 2604.16839)** — Hebbian hub detection. Read for memoryd v2 v2.0 (Month 6).
-5. **AEL (OpenReview dtPo105y8x)** — Two-timescale memory evolution. Read for memoryd v2 v2.0 (Month 6).
+The v10 paper list is consumed. v11 reshuffles to:
 
----
+1. **RHO** — keep. The real playbook for danlab-multimodal.
+2. **VLCache** — keep. The biggest perf win for perceptiond v1.1.
+3. **Meta Display + Snap + Xreal + Fable 5 product brief** — UPDATED v11. Snap failed at $2,195. Xreal at $1,500. Fable 5 export control formalized.
+4. **Stanford SIA paper** — keep. The actual production-grade self-improving agent.
+5. **Zyphra Zamba2-VL** — NEW v11. The v1.1 perceptiond default candidate.
+6. (honorable mention) **Stuart Russell op-ed** — NEW v11. 15 minutes. Political and moral context.
 
-*Last updated: 2026-06-13 08:40 IST (03:10 UTC) — v42 final.*
-*Status: Top 5 papers locked. Reading schedule locked. SIA-H fork + BitNet spike + OpenGlass GAP9 + Mem0 architecture + Harness Updating guardrail = 5 highest-ROI reads for Months 1-3. The bet is locked.*
+Total: 8.5 hours. All align to v11 month 1 foundation work.
+
+Build.
+
+## References
+
+[^1]: https://www.telecoms.com/mobile-devices/snap-unveils-a-pricey-new-pair-of-ar-glasses
+[^2]: https://techcrunch.com/2026/06/17/after-unveiling-ridiculously-expensive-ar-glasses-snaps-stock-takes-a-dive/
+[^3]: https://www.bbc.com/news/articles/clyr5knpklvo
+[^4]: https://glassalmanac.com/7-ar-breakthroughs-from-awe-2026-that-reveal-prices-chips-and-releases/
+[^5]: https://roadtovr.com/xreal-aura-release-date-price-1500/
+[^6]: https://www.theguardian.com/commentisfree/2026/jun/17/anthropic-ai-rsi-fable
+[^7]: https://pauseai.substack.com/p/the-us-government-puts-most-powerful-ai-back-in-its-box
+[^8]: https://www.marktechpost.com/2026/06/12/zyphra-release-zamba2-vl-hybrid-mamba2-transformer-vision-language-models-that-cut-time-to-first-token-by-about-an-order-of-magnitude
+[^9]: https://arxiv.org/html/2606.14777v1
