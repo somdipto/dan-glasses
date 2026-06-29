@@ -1,6 +1,6 @@
 # audiod — Audio Pipeline Service (SPEC)
 
-**Status:** Shipped (v0.3)
+**Status:** Shipped (v0.9)
 **Owner:** DAN-2
 **Repo:** `dan-glasses/Services/audiod/`
 
@@ -52,6 +52,7 @@ Threading model:
 | GET    | `/health`   | Liveness probe — always 200 if server is up         |
 | GET    | `/status`   | Full diagnostics: device, model, uptime, segments   |
 | GET    | `/config`   | Current effective config                            |
+| GET    | `/help`     | Discover the audiod HTTP API surface as JSON                   |
 | POST   | `/start`    | Start capture loop (idempotent)                     |
 | POST   | `/stop`     | Stop capture loop, keep WS clients connected        |
 | POST   | `/restart`  | Stop + Start                                        |
@@ -119,9 +120,16 @@ push_to_talk:
   hotkey: "space"          # see ptt.py for supported keys
 ```
 
-`POST /reload` re-reads this file and rebuilds the affected components
-(VAD model is **not** reloaded; whisper model path is hot-swapped but
-the binary restart is a TODO — currently requires a full `/restart`).
+`POST /reload` re-reads this file and rebuilds the affected components.
+Live hot-swap (no restart): VAD threshold, whisper model path, whisper
+threads, whisper language. The whisper binary path is re-resolved on
+every reload so newly-installed `whisper-cli` is picked up.
+
+`/reload` reports `pending_restart_for` for fields that cannot change
+without dropping the capture loop: `audio.{device,sample_rate,
+channels,period_size,buffer_periods}`, `publish.{mode,socket_path,
+ws_port}`, and `push_to_talk.hotkey`. Operators use `/restart` to
+apply those.
 
 ## Lifecycle
 
@@ -174,10 +182,11 @@ percent display.
 | whisper stalls                         | Model not at `whisper.model` path  | Transcribe thread logs error, skips  |
 | WS clients accumulate                  | Server never prunes dead clients   | Publisher pings every 30s, drops >60s idle |
 | Force-flush too aggressive             | `max_segment_ms` too low           | Utterances cut mid-word                |
+| Adaptive whisper timeout               | —                                  | —                                     |
 
 ## Tests
 
-`pytest tests/` — 73 cases across 11 files. Coverage:
+`pytest tests/` — 137 cases across 17 files. Coverage:
 
 - `test_capture.py` — ALSA frame size, period math
 - `test_vad.py` / `test_vad_onnx.py` — VAD thresholds, ONNX session lifecycle
@@ -188,23 +197,68 @@ percent display.
 - `test_publish_ws.py` — WebSocket fan-out, multi-client
 - `test_status_endpoint.py` — `/status` JSON shape, unset-pipeline case
 - `test_event_schema_conformance.py` — event JSON contract stability
+- `test_health_startup_probe.py` — `/health` 200/503 contract, three `is_ready()` shapes
+- `test_reload_and_backpressure.py` — `/reload` hot-swap, dropped-segment counter
+- `test_control_endpoints.py` — `/start /stop /restart /ptt /reload` JSON shape
+- `test_client.py` / `test_ws_stream.py` — sync HTTP + async WS client wiring
+- `test_real_audio_jfk.py` — real JFK sample (skipped if fixture missing)
 
-## Tauri integration
+## v1.0 changelog (2026-06-29)
 
-`dan-glasses-app/src/components/LiveTranscript.tsx` connects to:
+- **`/status` exposes per-component whisper readiness booleans.** Added
+  `whisper_binary_ok` and `whisper_model_ok` to the diagnostics snapshot
+  so operators can distinguish a missing `whisper-cli` binary from a
+  missing model file without reading stderr. The path strings
+  (`whisper_binary`, `whisper_model`) remain — booleans are additive.
+- **`/status` exposes `last_segment_ms`.** Duration of the most recently
+  transcribed segment in milliseconds. `0` before any segment has been
+  transcribed in the current lifetime. Reset by `/start` alongside the
+  other lifetime counters. Useful for diagnosing long-tail latency
+  without tailing logs.
+- Both fields stamp under the same `_lock` that guards
+  `_segments_transcribed` so a concurrent `/status` cannot observe a
+  half-updated state.
+- `/help` description updated for `/status`.
+- New tests in `tests/test_status_endpoint.py` (4 cases): the two
+  boolean readiness fields default to true when whisper is wired up,
+  `last_segment_ms` defaults to 0, increments after a successful
+  transcription, and resets on `/start`.
+- Test count: 137 → 141 (4 new, 0 regressions).
 
-- `ws://localhost:8091` (transcript stream)
-- `http://localhost:8090` (status poller + control POSTs)
+## v0.9 changelog (2026-06-28)
 
-The component renders a status strip (audiod state, segment count,
-uptime, model) and Start/Stop/Restart/PTT buttons backed by the
-control plane. Buttons are disabled when the pipeline is unreachable
-or a control request is in-flight.
+- **Readiness probe hardened.** `/health` no longer returns unconditional
+  200 ok. Returns **503 + status:loading** when any required component
+  is not ready; returns **200 + status:ok** only when VAD, whisper binary,
+  whisper model file, and publisher are all initialized.
+- **Three `is_ready()` contracts aligned.** `WhisperTranscriber.is_ready()`,
+  `TranscriptPublisher.is_ready()`, and `AudioPipeline.is_ready()` all
+  return `(bool, dict)` so `/health` can render a per-component breakdown.
+- **Per-whisper signal exposed.** The pipeline readiness breakdown now
+  surfaces `whisper_binary` and `whisper_model` as separate flags so
+  operators can distinguish a missing CLI binary from a missing model
+  file without reading stderr.
+- **Reason string on 503.** `HealthHandler._send_health` builds a
+  human-readable `reason` from the failing flags (e.g.
+  "whisper binary or model not ready").
+- New `tests/test_health_startup_probe.py` — 9 cases pinning the
+  200/503 contract, the no-pipeline case, the missing-model case, and
+  the three `is_ready()` shapes.
+- Test count: 130 → 137 (7 new, 0 regressions).
 
-## Open work
+## v0.8 changelog (2026-06-27)
 
-- Whisper binary hot-reload on `POST /reload`
-- Backpressure: drop oldest frames when transcribe queue > N
-- Audio device hot-swap on `/reload`
-- Per-segment language detection (currently uses config-level `language`)
-- UDP / WebRTC transport for `publish.mode`
+- WebSocket upgrade through `dan-glasses-app` proxy: `/api/audiod/stream` now bridges browser upgrades to audiod `:8091`. New `_serve_ws_upgrade` in `Services/dan-glasses-app/server.py` opens a raw TCP socket to the upstream, replays the handshake with path rewritten to `/`, validates the upstream 101, then bidirectionally pumps frames with `TCP_NODELAY` on both ends.
+- New `Services/dan-glasses-app/test_ws_upgrade.py` — 2 cases (101 Switching Protocols, ping→pong round-trip). Skips if dan-glasses-app not reachable.
+- Spec delta: WebSocket fan-out surface is now reachable through the proxy in addition to direct `ws://localhost:8091/`.
+- Test count: 121 → 130 (9 new, 0 regressions).
+
+## v0.7 changelog (2026-06-21)
+
+- New `client.py` — `AudiodClient` (sync HTTP) + `AudiodStream` (async WS).
+- New `tests/test_client.py` (19 cases) and `tests/test_ws_stream.py`
+  (2 cases, 1 sandbox-skipped) — covers dataclass wiring, all 8 HTTP
+  routes, offline-host error path, WS handshake, and stream filter.
+- New `Services/dan-glasses-app/static/audiod_demo.html` — drop-in
+  browser demo of the full control + stream contract.
+- Test count: 101 → 121 (21 new, 0 regressions).
