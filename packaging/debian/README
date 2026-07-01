@@ -1,0 +1,5 @@
+dan-glasses-daemons
+==================
+
+Six HTTP daemons + systemd units for the Dan Glasses wearable AI stack.
+See README.Debian for port map and operational notes.

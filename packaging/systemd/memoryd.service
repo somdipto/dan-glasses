@@ -1,0 +1,16 @@
+[Unit]
+Description=DAN Glasses Memory Service (semantic search + episodic/semantic/procedural memory)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/workspace/dan-glasses
+ExecStart=/usr/local/bin/python /home/workspace/dan-glasses/Services/memoryd/memoryd.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,35 @@
+#!/bin/sh
+# postinst for dan-glasses-daemons
+set -e
+
+case "$1" in
+  configure)
+    # Pick up the new units. On first install only enable; do not auto-start
+    # (operator decides when to start; we don't bind a camera/mic in CI).
+    if [ -z "$2" ]; then
+      for u in dan-glasses-audiod \
+               dan-glasses-perceptiond \
+               dan-glasses-memoryd \
+               dan-glasses-toold \
+               dan-glasses-ttsd \
+               dan-glasses-os-toold; do
+        if [ -e /etc/systemd/system/$u.service ] || [ -e /lib/systemd/system/$u.service ]; then
+          deb-systemd-helper enable "$u.service" >/dev/null || true
+        fi
+      done
+    fi
+    if [ -d /run/systemd/system ]; then
+      systemctl --system daemon-reload >/dev/null 2>&1 || true
+    fi
+    ;;
+  abort-upgrade|abort-remove|abort-deconfigure)
+    ;;
+  *)
+    echo "postinst called with unknown argument \`$1'" >&2
+    exit 1
+    ;;
+esac
+
+#DEBHELPER#
+
+exit 0

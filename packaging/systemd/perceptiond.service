@@ -1,0 +1,16 @@
+[Unit]
+Description=DAN Glasses Perception Service (VLM via LFM2.5-VL-450M + camera capture)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/workspace/dan-glasses
+ExecStart=/usr/bin/python3 /home/workspace/dan-glasses/Services/perceptiond/perceptiond.py --config /home/workspace/dan-glasses/Services/perceptiond/perceptiond.yaml
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>audiod demo · dan-glasses</title>
+<style>
+  :root {
+    --bg: #0d0e10;
+    --fg: #f5f1e8;
+    --muted: #8a857a;
+    --accent: #d8a657;
+    --ok: #6fcf97;
+    --err: #eb5757;
+    --card: rgba(28, 26, 22, 0.82);
+    --border: rgba(255,255,255,0.08);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 14px/1.5 -apple-system, "SF Pro Text", system-ui, sans-serif;
+    min-height: 100vh;
+    padding: 32px;
+  }
+  header {
+    max-width: 880px;
+    margin: 0 auto 24px;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+  }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+  .pill {
+    background: var(--accent);
+    color: #1a1815;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+  main {
+    max-width: 880px;
+    margin: 0 auto;
+    display: grid;
+    gap: 16px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  button {
+    background: var(--accent);
+    color: #1a1815;
+    border: 0;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.secondary {
+    background: transparent;
+    color: var(--fg);
+    border: 1px solid var(--border);
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  pre {
+    background: rgba(0,0,0,0.35);
+    padding: 12px;
+    border-radius: 8px;
+    overflow: auto;
+    max-height: 320px;
+    margin: 0;
+    font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .status-dot.ok    { background: var(--ok); }
+  .status-dot.err   { background: var(--err); }
+  .status-dot.live  { background: var(--accent); animation: pulse 1.4s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.4 } }
+  .transcript {
+    background: rgba(0,0,0,0.25);
+    border-radius: 8px;
+    padding: 12px;
+    min-height: 120px;
+    max-height: 320px;
+    overflow-y: auto;
+    font: 14px/1.6 system-ui;
+  }
+  .transcript .ev {
+    padding: 6px 0;
+    border-bottom: 1px dashed var(--border);
+  }
+  .transcript .ev:last-child { border-bottom: 0; }
+  .transcript .ev .ts {
+    color: var(--muted);
+    font-size: 11px;
+    margin-right: 8px;
+    font-family: ui-monospace, monospace;
+  }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <span class="pill">audiod</span>
+  <h1>Live transcript demo</h1>
+  <span class="muted">— dan-glasses-app</span>
+</header>
+
+<main>
+  <section class="card">
+    <div class="row">
+      <span id="health-dot" class="status-dot"></span>
+      <strong id="health-text">connecting…</strong>
+      <span class="muted">(<span id="uptime">—</span>)</span>
+      <span style="flex:1"></span>
+      <button class="secondary" id="refresh">Refresh status</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="row">
+      <button id="start">Start</button>
+      <button id="stop" class="secondary">Stop</button>
+      <button id="restart" class="secondary">Restart</button>
+      <button id="ptt" class="secondary">PTT</button>
+      <button id="reload" class="secondary">Reload config</button>
+      <span style="flex:1"></span>
+      <span id="stream-dot" class="status-dot"></span>
+      <span id="stream-text" class="muted">stream idle</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <strong>Transcripts</strong>
+    <div class="muted" style="margin: 4px 0 10px; font-size: 12px;">
+      Connected via WebSocket on :8091. Frames filtered to <code>type == transcript</code>.
+    </div>
+    <div class="transcript" id="transcripts">
+      <div class="muted">— no transcripts yet —</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <strong>Last status JSON</strong>
+    <pre id="status-json">{}</pre>
+  </section>
+</main>
+
+<script type="module">
+const AUDIOD_HTTP = "http://127.0.0.1:8090";
+const AUDIOD_WS   = "ws://127.0.0.1:8091/";
+
+const $ = (id) => document.getElementById(id);
+
+// --- HTTP control plane (mirrors client.py) --------------------------------
+
+async function call(method, path) {
+  const resp = await fetch(AUDIOD_HTTP + path, { method });
+  const text = await resp.text();
+  let body = {};
+  try { body = text ? JSON.parse(text) : {}; } catch { body = { raw: text }; }
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${JSON.stringify(body)}`);
+  return body;
+}
+
+async function refreshStatus() {
+  try {
+    const status = await call("GET", "/status");
+    $("health-dot").className = "status-dot " + (status.running ? "live" : "ok");
+    $("health-text").textContent = status.running ? "audiod running" : "audiod idle";
+    const up = Math.floor((status.uptime_ms || 0) / 1000);
+    $("uptime").textContent = `uptime ${up}s · pid ${status.pid} · ${status.segments_transcribed} segments`;
+    $("status-json").textContent = JSON.stringify(status, null, 2);
+  } catch (e) {
+    $("health-dot").className = "status-dot err";
+    $("health-text").textContent = "audiod unreachable";
+    $("status-json").textContent = String(e);
+  }
+}
+
+// --- WebSocket stream ------------------------------------------------------
+
+let ws = null;
+let wsShouldRun = false;
+
+function appendTranscript(ev) {
+  const node = document.createElement("div");
+  node.className = "ev";
+  const ts = new Date(ev.ts_ms || Date.now()).toISOString().substr(11, 8);
+  const conf = (ev.confidence != null) ? ` <span class="muted">[${(ev.confidence * 100).toFixed(0)}%]</span>` : "";
+  node.innerHTML = `<span class="ts">${ts}</span>${escapeHtml(ev.text || "")}${conf}`;
+  const list = $("transcripts");
+  if (list.firstElementChild && list.firstElementChild.classList.contains("muted")) list.innerHTML = "";
+  list.appendChild(node);
+  list.scrollTop = list.scrollHeight;
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+}
+
+async function startStream() {
+  wsShouldRun = true;
+  $("stream-dot").className = "status-dot live";
+  $("stream-text").textContent = "stream connecting…";
+  while (wsShouldRun) {
+    try {
+      ws = new WebSocket(AUDIOD_WS);
+      await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
+      $("stream-dot").className = "status-dot ok";
+      $("stream-text").textContent = "stream live";
+      await new Promise((res) => {
+        ws.onmessage = (m) => {
+          try {
+            const ev = JSON.parse(m.data);
+            if (ev.type === "transcript") appendTranscript(ev);
+          } catch {}
+        };
+        ws.onclose = res;
+      });
+    } catch (e) {
+      $("stream-dot").className = "status-dot err";
+      $("stream-text").textContent = "stream error, retrying in 2s";
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+}
+
+// --- wiring ----------------------------------------------------------------
+
+$("start").onclick   = async () => { await call("POST", "/start");   await refreshStatus(); };
+$("stop").onclick    = async () => { await call("POST", "/stop");    await refreshStatus(); };
+$("restart").onclick = async () => { await call("POST", "/restart"); await refreshStatus(); };
+$("ptt").onclick     = async () => { await call("POST", "/ptt"); };
+$("reload").onclick  = async () => { await call("POST", "/reload");  await refreshStatus(); };
+$("refresh").onclick = refreshStatus;
+
+refreshStatus();
+setInterval(refreshStatus, 5000);
+startStream();
+</script>
+</body>
+</html>

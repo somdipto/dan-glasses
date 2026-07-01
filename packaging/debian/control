@@ -1,0 +1,21 @@
+Source: dan-glasses-daemons
+Section: utils
+Priority: optional
+Maintainer: DanLab <som@danlab.dev>
+Uploaders: somdipto <somdiptonandy@gmail.com>
+Build-Depends: debhelper-compat (= 13), dh-python, python3
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+Homepage: https://github.com/somdipto/dan-glasses
+
+Package: dan-glasses-daemons
+Architecture: all
+Depends: ${python3:Depends}, ${misc:Depends}, python3-flask, python3-requests, python3-yaml, python3-numpy, python3-aiohttp, python3-websockets
+Recommends: python3-sentence-transformers, python3-pillow, python3-opencv
+Description: Dan Glasses daemon services
+ Six HTTP daemons that form the runtime backbone of the Dan Glasses wearable
+ AI assistant: audiod (VAD+STT), perceptiond (camera+VLM), memoryd (semantic
+ memory), toold (sandboxed tool execution), ttsd (text-to-speech), and
+ os-toold (OS-level guard). All six ship as systemd units and bind to
+ loopback by default. The OpenClaw gateway is configured separately via
+ /etc/openclaw/openclaw.json and is NOT part of this package.

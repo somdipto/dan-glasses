@@ -1,0 +1,9 @@
+#!/usr/bin/make -f
+%:
+	dh $@ --with python3
+
+override_dh_install:
+	dh_install
+	# Normalize python shebang to system /usr/bin/python3.
+	find debian/dan-glasses-daemons -name "*.py" -exec \
+	  sed -i 's|^#!.*python3$|#!/usr/bin/python3|' {} +

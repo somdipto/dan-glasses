@@ -1,0 +1,16 @@
+[Unit]
+Description=DAN Glasses Audio Pipeline Service (VAD + STT via whisper.cpp)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/workspace/dan-glasses
+ExecStart=/usr/local/bin/python3 /home/workspace/dan-glasses/Services/audiod/audiod.py --config /home/workspace/dan-glasses/Services/audiod/config.yaml
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

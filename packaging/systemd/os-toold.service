@@ -1,0 +1,16 @@
+[Unit]
+Description=DAN Glasses OS Tool Service (path-guarded file/process access)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/workspace/dan-glasses
+ExecStart=/usr/bin/python3 /home/workspace/dan-glasses/Services/os-toold/os_toold.py --config /home/workspace/dan-glasses/Services/os-toold/config.yaml
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
