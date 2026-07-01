@@ -1,0 +1,32 @@
+{
+  "tools": [
+    {
+      "name": "list_dir",
+      "type": "shell",
+      "command": "ls -la {path}",
+      "description": "List directory contents",
+      "args": [
+        "path"
+      ],
+      "timeout": 30
+    },
+    {
+      "name": "echo_test",
+      "type": "shell",
+      "command": "echo {msg}",
+      "description": "Echo test",
+      "args": [
+        "msg"
+      ],
+      "timeout": 30
+    },
+    {
+      "name": "hello",
+      "type": "shell",
+      "command": "echo Hello from Dan Glasses",
+      "description": "test tool",
+      "args": [],
+      "timeout": 5
+    }
+  ]
+}

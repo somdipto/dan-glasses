@@ -1,0 +1,16 @@
+safe_paths:
+  - /home/workspace
+  - /tmp
+  - /root
+
+allowed_commands:
+  - ls
+  - cat
+  - echo
+  - pwd
+  - cd
+
+blocked_paths:
+  - /etc
+  - /usr
+  - /bin (except approved)

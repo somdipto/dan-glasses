@@ -1,0 +1,6 @@
+# perceptiond dependencies
+numpy>=1.24.0
+Pillow>=10.0.0
+PyYAML>=6.0
+opencv-python>=4.9.0.80  # optional, for face detection + MJPEG/YUYV decode
+linuxpy.video>=0.4.0    # V4L2 capture; falls back to mock if /dev/video0 unavailable

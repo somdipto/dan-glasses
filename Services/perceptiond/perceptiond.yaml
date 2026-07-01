@@ -1,0 +1,29 @@
+camera:
+  device: /dev/video0
+  width: 640
+  height: 480
+  fps: 5
+
+salience:
+  motion_threshold: 0.05
+  pixel_delta_threshold: 30
+  background_update_interval: 30
+  mode: "any"  # "motion" | "face" | "any"
+  face_scale_factor: 1.1
+  face_min_neighbors: 5
+  face_min_size: 30
+
+vlm:
+  model_path: /home/workspace/danlab-multimodal/models/LFM2.5-VL-450M-Q4_0.gguf
+  mmproj_path: /home/workspace/danlab-multimodal/models/mmproj-LFM2.5-VL-450m-F16.gguf
+  llama_cli_path: /home/workspace/danlab-multimodal/llama.cpp/build/bin/llama-mtmd-cli
+  prompt: "Describe this image briefly. Focus on: people, objects, text, activities."
+  max_tokens: 100
+  timeout: 240
+
+server:
+  socket_path: /var/run/perceptiond.sock
+  mode: stdout
+
+power:
+  mode: watchful
