@@ -1,0 +1,46 @@
+.dan-glasses-app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #0a0a0b;
+  color: #e8e6e3;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.app-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  background: #111114;
+  border-bottom: 1px solid #2a2a2d;
+}
+
+.tab {
+  background: transparent;
+  border: 1px solid transparent;
+  color: #a1a1aa;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.tab:hover {
+  color: #fafafa;
+  background: #18181b;
+}
+
+.tab.active {
+  color: #fafafa;
+  background: #1f1f23;
+  border-color: #2a2a2d;
+}
+
+.app-main {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}

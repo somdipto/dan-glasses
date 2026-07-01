@@ -1,18 +1,7 @@
-# dan-glasses-app
+# Tauri + React + Typescript
 
-Tauri v2 React frontend for Dan Glasses.
+This template should help get you started developing with Tauri, React and Typescript in Vite.
 
-## Status
-Placeholder — initialize with `npm create tauri-app@latest`
+## Recommended IDE Setup
 
-## Tech
-- Tauri v2
-- React + TypeScript
-- CrabCamera plugin for camera access
-
-## Dev
-```bash
-cd dan-glasses-app
-npm install
-npm run tauri dev
-```
+- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)

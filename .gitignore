@@ -1,0 +1,96 @@
+# --- Node / Tauri / JS ---
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+.tsbuildinfo
+.npm/
+.yarn/
+pnpm-debug.log*
+yarn-error.log*
+yarn-debug.log*
+.npmrc
+
+# --- Rust / Tauri ---
+# Keep Cargo.lock tracked for apps/binaries; ignore build artifacts.
+**/target/
+**/Cargo.lock.bak
+*.rs.bk
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# --- Models / Data / Cache ---
+.cache/
+*.gguf
+*.bin
+*.safetensors
+*.h5
+*.onnx
+*.pt
+*.pth
+*.pkl
+*.npz
+*.npy
+*.parquet
+*.arrow
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+!whisper.cpp/**/*.gguf
+!models/**/README.md
+models/**/README.md
+
+# --- Whisper.cpp build artifacts ---
+whisper.cpp/build/
+whisper.cpp/.deps/
+whisper.cpp/*.o
+whisper.cpp/*.a
+
+# --- OS / Editor ---
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+
+# --- Build / packaging outputs ---
+*.deb
+*.rpm
+*.AppImage
+*.dmg
+*.snap
+*.pkg
+*.tar.gz
+*.tar.bz2
+*.zip
+
+# --- Tailscale / OpenClaw runtime ---
+tailscaled.state
+tailscaled.log
+.openclaw-dev/
+.openclaw-cache/
+
+# --- Worktrees / agent scratch (keep dan*.md tracked) ---
+# (dan1*.md, dan2*.md, etc. are intentionally tracked)
+.worktrees/
+.tmp/
