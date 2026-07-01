@@ -101,3 +101,62 @@ class TestTranscriptionMock:
         assert "text" in result
         assert "[mock transcript" in result["text"]
         assert result["end_ms"] == 1000
+
+class TestRestartCounterReset:
+    """Regression: /restart must reset lifetime counters so /status
+    reflects only the current lifetime, not stale history.
+
+    Bug fixed in v0.6: _cmd_start was refreshing _started_at_ms but
+    leaving _segments_transcribed, _dropped_segments, and
+    _transcribe_inflight intact, so /status lied about segment count
+    after a restart.
+    """
+
+    @staticmethod
+    def _cfg():
+        return {
+            "audio": {"device": "default", "sample_rate": 16000, "channels": 1,
+                      "period_size": 512, "buffer_periods": 8},
+            "vad": {"threshold": 0.5, "min_speech_ms": 250, "min_silence_ms": 200},
+            "whisper": {"model": "/tmp/fake-ggml-base.bin", "language": "auto", "threads": 2},
+            "publish": {"mode": "stdout", "socket_path": "/tmp/audiod-test.sock", "ws_port": 18091},
+            "push_to_talk": {"enabled": False, "hotkey": "space"},
+        }
+
+    def test_restart_resets_segments_transcribed(self):
+        """Force a fake history, restart, then assert /status reads 0."""
+        from audiod import AudioPipeline
+        pipeline = AudioPipeline(self._cfg())
+        pipeline._segments_transcribed = 47
+        pipeline._dropped_segments = 3
+        pipeline._transcribe_inflight = 2
+
+        with patch.object(pipeline, "capture") as cap, \
+             patch.object(pipeline, "_process_loop", lambda: None), \
+             patch.object(pipeline, "_transcription_worker", lambda: None):
+            cap.start = Mock()
+            cap.stop = Mock()
+            pipeline._cmd_restart()
+
+        snap = pipeline.stats()
+        assert snap["segments_transcribed"] == 0
+        assert snap["dropped_segments"] == 0
+        assert snap["transcribe_inflight"] == 0
+
+    def test_restart_resets_uptime_to_near_zero(self):
+        """Uptime must be reset, not just _started_at_ms."""
+        import time as _time
+        from audiod import AudioPipeline
+        pipeline = AudioPipeline(self._cfg())
+        pipeline._started_at_ms = int(_time.time() * 1000) - 60_000  # pretend 60s old
+
+        with patch.object(pipeline, "capture") as cap, \
+             patch.object(pipeline, "_process_loop", lambda: None), \
+             patch.object(pipeline, "_transcription_worker", lambda: None):
+            cap.start = Mock()
+            cap.stop = Mock()
+            pipeline._cmd_restart()
+
+        snap = pipeline.stats()
+        # Allow generous slack for slow CI (up to 5s).
+        assert snap["uptime_ms"] < 5_000

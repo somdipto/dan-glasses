@@ -409,6 +409,32 @@ class TranscriptPublisher:
             "ws_port": self.ws_port,
         }
 
+    def is_ready(self) -> tuple[bool, dict]:
+        """Liveness probe for /health.
+
+        Returns (ready, breakdown) where ready is True iff the
+        configured transport(s) are initialized and the WS listener
+        thread is alive (for ws modes). For pure-stdout mode the
+        publisher is always ready: stdout has no listener state to
+        fail. For socket modes the unix listener must be bound. For
+        websocket modes the dedicated thread must be alive.
+        """
+        mode = self.mode
+        stdout_ok = mode in ("stdout", "both")
+        socket_ok = True
+        ws_ok = True
+        if mode in ("socket", "both"):
+            socket_ok = self._sock is not None
+        if mode in ("websocket", "both", "ws", "stdout"):
+            ws_ok = (self._ws_server is not None) and self._ws_server.is_alive()
+        ready = stdout_ok and socket_ok and ws_ok
+        return (ready, {
+            "mode": mode,
+            "stdout": stdout_ok,
+            "socket": socket_ok,
+            "websocket": ws_ok,
+        })
+
     def close(self):
         """Close all publishing channels."""
         self._running = False

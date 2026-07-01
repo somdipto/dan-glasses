@@ -21,6 +21,7 @@ from vad import VADSpeechDetector
 from transcription import WhisperTranscriber
 from ptt import PTTTrigger
 from publish import TranscriptPublisher
+from segment_timing import SegmentTimingHistogram
 
 import http.server
 
@@ -41,7 +42,18 @@ class HealthHandler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            self._send_health()
+            # Back-compat alias for /ready. Keep the existing
+            # 200/503 + readiness breakdown contract.
+            self._send_ready()
+        elif self.path == "/live":
+            # Liveness probe: 200 as long as the HTTP server is up.
+            # Never 503 here — that's what restart decisions should
+            # look at (process died / port unreachable), not /ready.
+            self._send_live()
+        elif self.path == "/ready":
+            # Readiness probe: 200 if pipeline fully ready, 503 with
+            # breakdown + reason otherwise. K8s readinessProbe shape.
+            self._send_ready()
         elif self.path == "/status":
             self._send_status()
         elif self.path == "/config":
@@ -79,8 +91,23 @@ class HealthHandler(http.server.BaseHTTPRequestHandler):
         except Exception as e:
             self._json_resp(500, {"error": str(e)})
 
-    def _send_health(self):
-        """Liveness + readiness probe.
+    def _send_live(self):
+        """Liveness probe — 200 as long as the HTTP server is up.
+
+        Used by orchestrators (Kubernetes livenessProbe, systemd
+        Watchdog, etc.) to decide "restart the process?". Never 503
+        here — readiness gaps (model still loading, VAD not bound)
+        are surfaced by /ready, not /live.
+        """
+        import json as _json
+        self._json_resp(200, {
+            "status": "alive",
+            "service": "audiod",
+            "pid": os.getpid(),
+        })
+
+    def _send_ready(self):
+        """Readiness probe + back-compat /health alias.
 
         200 + {"status":"ok", "service":"audiod", "readiness":{...}}
             when VAD, whisper binary+model, and publisher are all
@@ -184,8 +211,10 @@ class HealthHandler(http.server.BaseHTTPRequestHandler):
             "http_port": http_port,
             "ws_port": ws_port,
             "endpoints": [
-                {"method": "GET",  "path": "/health",  "desc": "Liveness probe. Returns {status:ok,service:audiod}."},
-                {"method": "GET",  "path": "/status",  "desc": "Full diagnostics: running flag, VAD ready, whisper_binary_ok / whisper_model_ok booleans (distinguish missing CLI from missing model), whisper model/threads, PTT, publisher, dropped segments, in-flight transcriptions, last_segment_ms, uptime."},
+                {"method": "GET",  "path": "/health",  "desc": "Liveness + readiness alias. Back-compat for callers predating /live + /ready. Returns {status:ok,service:audiod,readiness:{...}} or 503 + status:loading + reason when any component is not ready."},
+                {"method": "GET",  "path": "/live",    "desc": "Liveness probe. 200 + {status:alive,service:audiod,pid} as long as the HTTP server is up. Never 503 — readiness gaps go to /ready."},
+                {"method": "GET",  "path": "/ready",   "desc": "Readiness probe. 200 when VAD + whisper binary + whisper model + publisher are all initialized; 503 + readiness breakdown + reason otherwise. K8s readinessProbe shape."},
+                {"method": "GET",  "path": "/status",  "desc": "Full diagnostics: running flag, VAD ready, whisper_binary_ok / whisper_model_ok booleans (distinguish missing CLI from missing model), whisper model/threads, PTT, publisher, dropped segments, in-flight transcriptions, last_segment_ms, segment_timing (count/max/p50/p95/buckets), uptime."},
                 {"method": "GET",  "path": "/config",  "desc": "Current effective config (merged from config.yaml)."},
                 {"method": "GET",  "path": "/help",    "desc": "This surface."},
                 {"method": "POST", "path": "/start",   "desc": "Begin capture loop. Idempotent."},
@@ -252,6 +281,9 @@ class AudioPipeline:
         # 0 when no segment has been transcribed yet in this lifetime.
         # Updated under _lock in _run_transcribe, reset by _reset_counters.
         self._last_segment_ms = 0
+        # Bounded ring of recent per-segment durations. Powers the
+        # `segment_timing` block in /status (count, max, p50, p95, buckets).
+        self._timing = SegmentTimingHistogram(capacity=256)
         self._process_thread: Optional[threading.Thread] = None
 
         # Cap on a single speech segment length. Prevents a stuck VAD
@@ -405,9 +437,14 @@ class AudioPipeline:
             if result["text"]:
                 result["start_ms"] = start_ms
                 self.publisher.publish(result)
+                duration_ms = int(len(segment) * 1000 / self.sample_rate)
                 with self._lock:
                     self._segments_transcribed += 1
-                    self._last_segment_ms = int(len(segment) * 1000 / self.sample_rate)
+                    self._last_segment_ms = duration_ms
+                # Record outside the counter lock — the histogram has its
+                # own lock and we don't want a slow /status read to
+                # briefly hold up transcription.
+                self._timing.record(duration_ms)
         except Exception as e:
             print(f"audiod: transcribe error: {e}", flush=True)
 
@@ -446,6 +483,7 @@ class AudioPipeline:
             self._transcribe_inflight = 0
             self._last_segment_ms = 0
             self._started_at_ms = int(time.time() * 1000)
+        self._timing.reset()
 
     def _cmd_start(self) -> dict:
         """Start the capture loop (idempotent)."""
@@ -628,6 +666,7 @@ class AudioPipeline:
                 "transcribe_inflight": self._transcribe_inflight,
                 "last_segment_ms": self._last_segment_ms,
                 "max_segment_ms": self._max_segment_ms,
+                "segment_timing": self._timing.snapshot(),
                 "ptt_enabled": self._ptt_enabled,
                 "ptt_hotkey": self.config.get("push_to_talk", {}).get("hotkey", "space"),
                 "started_at_ms": self._started_at_ms,

@@ -1,0 +1,87 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://danlab.dev/schemas/audiod/transcript-event.v1.json",
+  "title": "audiod Transcript Event",
+  "description": "Emitted by audiod on every transcribed speech segment. Streamed via stdout (newline-delimited JSON), WebSocket /stream (RFC 6455 text frames), and Unix socket (newline-delimited JSON).",
+  "type": "object",
+  "required": [
+    "type",
+    "session_id",
+    "event_id",
+    "seq",
+    "text",
+    "start_ms",
+    "end_ms",
+    "confidence",
+    "ts_ms"
+  ],
+  "properties": {
+    "type": {
+      "const": "transcript",
+      "description": "Discriminator. Only `transcript` is currently emitted by audiod; reserved for future variants (e.g. `vad_start`, `vad_end`)."
+    },
+    "session_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Stable across the audiod process lifetime. Use to group events from one capture session."
+    },
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique per event. Idempotency key for downstream consumers."
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonic per-session counter. Strictly increasing, no gaps unless explicit in a future schema version."
+    },
+    "text": {
+      "type": "string",
+      "description": "Transcribed text. Empty string is allowed (whisper produced no text for the segment)."
+    },
+    "start_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Segment start in milliseconds, relative to capture start of the current session."
+    },
+    "end_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Segment end in milliseconds, relative to capture start of the current session. end_ms >= start_ms."
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Whisper's average token-level probability. May be 0.0 for empty segments."
+    },
+    "ts_ms": {
+      "type": "integer",
+      "description": "Wall-clock emission time (Unix epoch milliseconds, UTC). Set by audiod at the moment of WS/stdout/socket write."
+    },
+    "language": {
+      "type": "string",
+      "description": "Optional. ISO-639-1 code (e.g. 'en'). Present when whisper was configured with language='auto' and detected a non-empty language."
+    },
+    "model": {
+      "type": "string",
+      "description": "Optional. Absolute path to the whisper model that produced this transcript. Useful for audit when model is hot-swapped via /reload."
+    }
+  },
+  "additionalProperties": false,
+  "examples": [
+    {
+      "type": "transcript",
+      "session_id": "8d5b9641-51ed-42d5-bfb5-fc8be12ec24f",
+      "event_id": "5b9c5e7a-2c8a-4a0a-9b1c-1d2e3f4a5b6c",
+      "seq": 1,
+      "text": "hello world",
+      "start_ms": 1234,
+      "end_ms": 1976,
+      "confidence": 0.92,
+      "ts_ms": 1730000000000,
+      "language": "en",
+      "model": "/home/workspace/dan-glasses/models/ggml-base.bin"
+    }
+  ]
+}

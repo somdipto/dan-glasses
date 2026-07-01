@@ -178,3 +178,22 @@ class VADSpeechDetector:
             self._reset()
             return segment
         return np.array([], dtype=np.int16)
+
+    def is_speaking(self) -> bool:
+        """Return True if currently inside a speech segment.
+
+        Used by the audiod main loop's watchdog to detect a stuck VAD
+        state where the segment exceeds max_segment_ms without a
+        silence boundary.
+        """
+        return self._speech_active
+
+    def speech_duration_ms(self) -> int:
+        """Return how long the current speech segment has been held, in ms.
+
+        Returns 0 when not in a speech segment.
+        """
+        if not self._speech_active:
+            return 0
+        total_samples = sum(len(x) for x in self._speech_buffer)
+        return int(total_samples * 1000 / self.sample_rate)

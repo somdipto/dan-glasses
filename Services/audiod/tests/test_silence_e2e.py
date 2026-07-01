@@ -90,6 +90,25 @@ def test_ws_handshake_signature_rfc6455():
     # Use a high unused port to avoid colliding with live audiod
     pub = TranscriptPublisher(mode="stdout", ws_port=18991)
     try:
+        # Wait for the WS server thread to bind. The listener is
+        # started in a background thread, so we need to poll for
+        # the bind to land before we connect.
+        import time
+        deadline = time.time() + 2.0
+        bound = False
+        while time.time() < deadline:
+            probe = socket.socket()
+            probe.settimeout(0.05)
+            try:
+                probe.connect(("127.0.0.1", 18991))
+                probe.close()
+                bound = True
+                break
+            except OSError:
+                probe.close()
+                time.sleep(0.02)
+        assert bound, "WS server did not bind to 18991 within 2s"
+
         s = socket.socket()
         s.settimeout(2.0)
         s.connect(("127.0.0.1", 18991))

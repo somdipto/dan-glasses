@@ -143,3 +143,86 @@ def test_pipeline_unset_returns_503():
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def test_help_endpoint_returns_api_surface():
+    """GET /help documents the audiod HTTP API as JSON."""
+    HealthHandler.pipeline = AudioPipeline(_load_minimal_config())
+    port = 18093
+    srv = start_health_server(port)
+    time.sleep(0.1)
+    try:
+        code, body = _get(port, "/help")
+        assert code == 200
+        assert body["service"] == "audiod"
+        assert body["http_port"] == 18093
+        paths = {ep["path"] for ep in body["endpoints"]}
+        assert "/health" in paths
+        assert "/status" in paths
+        assert "/config" in paths
+        assert "/reload" in paths
+        assert "/start" in paths
+        assert "/stop" in paths
+        assert "/restart" in paths
+        assert "/ptt" in paths
+        # Every endpoint has method+path+desc
+        for ep in body["endpoints"]:
+            assert "method" in ep and "path" in ep and "desc" in ep
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_reload_hot_swaps_whisper_model_no_restart():
+    """POST /reload swaps whisper model + threads live without restart.
+
+    Verifies the v0.7 SPEC claim: whisper model path is hot-swappable.
+    Uses an isolated tmp config file so the test never touches the real
+    `Services/audiod/config.yaml`.
+    """
+    import os
+    import tempfile
+    import yaml as _yaml
+
+    cfg = _load_minimal_config()
+    MODELS = [
+        "/home/workspace/dan-glasses/models/ggml-base.bin",
+        "/home/workspace/dan-glasses/models/ggml-tiny.bin",
+    ]
+    cfg["whisper"]["model"] = MODELS[0]
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as tmp:
+        _yaml.safe_dump(cfg, tmp)
+        cfg_path = tmp.name
+    try:
+        pipeline = AudioPipeline(cfg, config_path=cfg_path)
+        HealthHandler.pipeline = pipeline
+        port = 18094
+        srv = start_health_server(port)
+        time.sleep(0.1)
+        try:
+            assert pipeline.transcriber.model_path == MODELS[0]
+            assert pipeline.transcriber.threads == 2
+
+            # Mutate ONLY the tmp config and trigger reload.
+            with open(cfg_path, "r") as f:
+                disk_cfg = _yaml.safe_load(f)
+            disk_cfg["whisper"]["model"] = MODELS[1]
+            disk_cfg["whisper"]["threads"] = 4
+            with open(cfg_path, "w") as f:
+                _yaml.safe_dump(disk_cfg, f)
+
+            code, body = _post(port, "/reload")
+            assert code == 200
+            assert body["ok"] is True
+            assert body["whisper_model"] == MODELS[1]
+            assert body["whisper_threads"] == 4
+            # No audio/publish/ptt fields changed → nothing pending restart.
+            assert body["pending_restart_for"] == []
+            # Verify the transcriber actually picked up the new model.
+            assert pipeline.transcriber.model_path == MODELS[1]
+            assert pipeline.transcriber.threads == 4
+        finally:
+            srv.shutdown()
+            srv.server_close()
+    finally:
+        os.unlink(cfg_path)

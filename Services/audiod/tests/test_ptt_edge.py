@@ -92,9 +92,8 @@ def test_evdev_fires_only_on_down_edge():
 def test_evdev_other_keys_dont_fire():
     """Only the configured hotkey (space=57) should fire.
 
-    Implementation note: the current ptt.py fires on any EV_KEY down edge,
-    not filtered by code. This test asserts current behavior — if we add
-    hotkey filtering, this test will need to change to verify the filter.
+    Non-hotkey down/up events must be ignored entirely so that typing
+    'a' and 's' does not trigger transcription.
     """
     _install_fake_evdev()
     cb = MagicMock()
@@ -116,13 +115,74 @@ def test_evdev_other_keys_dont_fire():
         ptt._running = False
         t.join(timeout=1.5)
 
-    # Current behavior: any key down edge fires. Two down edges here.
-    # If you add hotkey filtering, change to assertEqual(0, ...).
-    assert cb.call_count == 2
+    assert cb.call_count == 0, f"non-hotkey keys should not fire; got {cb.call_count}"
+
+
+def test_evdev_fires_only_on_configured_hotkey():
+    """Verify hotkey filtering when hotkey != 'space'."""
+    _install_fake_evdev()
+    cb = MagicMock()
+    ptt = PTTTrigger(hotkey="tab", on_trigger=cb)
+    ptt._running = True
+
+    # Mix of space (57) and tab (15) — only tab should fire.
+    events = [
+        (57, 1), (57, 0),  # space: ignored
+        (15, 1), (15, 0),  # tab:   fires (down edge)
+        (57, 1), (57, 0),  # space: ignored
+    ]
+    dev = _make_device_with_events(events)
+
+    with patch.object(ptt_mod, "sel") as mock_sel:
+        mock_sel.select.return_value = ([dev], [], [])
+        t = threading.Thread(target=ptt._listen_linux, daemon=True)
+        t.start()
+        for _ in range(50):
+            time.sleep(0.02)
+            if not dev._queued:
+                break
+        ptt._running = False
+        t.join(timeout=1.5)
+
+    assert cb.call_count == 1, f"only one tab down edge; got {cb.call_count}"
+
+
+def test_resolve_hotkey_known_names():
+    """resolve_hotkey() maps every supported name to a valid evdev code."""
+    assert ptt_mod.resolve_hotkey("space") == 57
+    assert ptt_mod.resolve_hotkey("tab") == 15
+    assert ptt_mod.resolve_hotkey("enter") == 28
+    assert ptt_mod.resolve_hotkey("esc") == 1
+    assert ptt_mod.resolve_hotkey("f1") == 59
+    # Case-insensitive
+    assert ptt_mod.resolve_hotkey("SPACE") == 57
+    assert ptt_mod.resolve_hotkey("Space") == 57
+
+
+def test_resolve_hotkey_unknown_raises():
+    """Unknown hotkey names must raise KeyError, not silently fall back."""
+    with pytest.raises(KeyError):
+        ptt_mod.resolve_hotkey("backspace")
+    with pytest.raises(KeyError):
+        ptt_mod.resolve_hotkey("")
+
+
+def test_ptt_disables_self_on_unknown_hotkey():
+    """PTTTrigger with an unrecognised hotkey must not crash and must refuse to start."""
+    cb = MagicMock()
+    ptt = PTTTrigger(hotkey="zzz_unknown", on_trigger=cb)
+    assert ptt._hotkey_code is None
+    # start() should be a no-op when hotkey is unknown.
+    ptt.start()
+    time.sleep(0.05)
+    assert ptt._thread is None
+    # stop() should also be a no-op (no thread to join).
+    ptt.stop()
 
 
 def test_evdev_handles_oserror_on_read():
     """Device disconnect mid-read shouldn't kill the listener."""
+    import itertools
     _install_fake_evdev()
 
     class BadDevice:
@@ -147,11 +207,12 @@ def test_evdev_handles_oserror_on_read():
     ptt._running = True
 
     with patch.object(ptt_mod, "sel") as mock_sel:
-        mock_sel.select.side_effect = [
-            ([bad], [], []),
-            ([good], [], []),
-            ([], [], []),
-        ]
+        # First two returns surface a bad device and a good device, then
+        # we loop on the empty set until _running flips False.
+        mock_sel.select.side_effect = itertools.chain(
+            [([bad], [], []), ([good], [], [])],
+            itertools.repeat(([], [], [])),
+        )
         t = threading.Thread(target=ptt._listen_linux, daemon=True)
         t.start()
         time.sleep(0.4)

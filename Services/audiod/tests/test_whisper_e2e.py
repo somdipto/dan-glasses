@@ -64,7 +64,18 @@ class TestWhisperEndToEnd:
         assert "start_ms" in result
         assert "end_ms" in result
         assert "confidence" in result
-        assert result["end_ms"] == int(0.5 * 1000)
+        # The 0.5s chirp is not real speech; whisper may either transcribe
+        # BLANK_AUDIO (silence hallucination) or hallucinate a token. Accept
+        # either outcome: empty text → end_ms==0, non-empty → end_ms==500.
+        if result["text"]:
+            assert result["end_ms"] == int(0.5 * 1000), (
+                f"non-empty transcription should span the full segment, "
+                f"got end_ms={result['end_ms']} for text={result['text']!r}"
+            )
+        else:
+            assert result["end_ms"] == 0, (
+                f"empty transcription should have end_ms==0, got {result['end_ms']}"
+            )
 
     def test_short_segment_returns_empty(self):
         """Below 160 samples, transcriber should short-circuit to empty text."""
@@ -89,4 +100,43 @@ class TestWhisperEndToEnd:
         tr = WhisperTranscriber(model_path=MODEL)
         result = tr.transcribe(pcm, 16000)
         assert result["text"] == ""
-        assert result["end_ms"] == 250
+        # Empty text → zero timing. We used to return the full duration
+        # for silence, but that leaked the input span into the event
+        # stream and confused downstream consumers (memoryd indexes
+        # empty-but-spanning events as real utterances).
+        assert result["end_ms"] == 0
+
+
+class TestWhisperTimeoutBudget:
+    """Regression: the whisper-cli subprocess timeout must be adaptive
+    and bounded, not a fixed 10s.
+
+    Bug fixed in v0.6: under sustained CPU pressure (full test suite
+    hammering whisper-tiny back-to-back), the fixed 10s timeout fired
+    on the first cold-cache call. v0.6 makes the budget
+    `15s + 3s/sec_of_audio`, capped at 60s.
+    """
+
+    def test_short_audio_meets_floor(self):
+        from transcription import WhisperTranscriber
+        tr = WhisperTranscriber(model_path=MODEL, threads=2)
+        # 500ms of audio → 15 + 3*0.5 = 16.5s budget
+        pcm = np.zeros(8000, dtype=np.int16)
+        budget = tr._timeout_for(pcm, 16000)
+        assert budget >= 15.0, f"floor breached: {budget}"
+        assert budget <= 60.0, f"cap breached: {budget}"
+
+    def test_long_audio_capped(self):
+        from transcription import WhisperTranscriber
+        tr = WhisperTranscriber(model_path=MODEL, threads=2)
+        # 30s of audio → 15 + 3*30 = 105s raw, must cap to 60s
+        pcm = np.zeros(30 * 16000, dtype=np.int16)
+        budget = tr._timeout_for(pcm, 16000)
+        assert budget == 60.0, f"expected 60s cap, got {budget}"
+
+    def test_grows_with_length(self):
+        from transcription import WhisperTranscriber
+        tr = WhisperTranscriber(model_path=MODEL, threads=2)
+        b1 = tr._timeout_for(np.zeros(16000, dtype=np.int16), 16000)   # 1s
+        b5 = tr._timeout_for(np.zeros(5 * 16000, dtype=np.int16), 16000)  # 5s
+        assert b5 > b1, f"expected 5s budget > 1s budget, got {b1} vs {b5}"

@@ -1,6 +1,6 @@
 # audiod — Audio Pipeline Service (SPEC)
 
-**Status:** Shipped (v0.9)
+**Status:** Shipped (v1.1)
 **Owner:** DAN-2
 **Repo:** `dan-glasses/Services/audiod/`
 
@@ -40,8 +40,9 @@ Threading model:
 - `transcription.py` — `whisper-cli` subprocess driver, JSON-sidecar confidence
 - `ptt.py` — push-to-talk trigger (evdev on Linux, polling fallback elsewhere)
 - `publish.py` — `TranscriptPublisher` (stdout / unix-socket / WebSocket)
+- `segment_timing.py` — bounded ring of recent per-segment durations, exposes count/max/p50/p95 + fixed bucket distribution (v1.2)
 - `config.yaml` — runtime config
-- `tests/` — 11 test files, 73 cases (see `tests/README.md`)
+- `tests/` — 19 test files, 168 cases (1 sandbox-skipped)
 
 ## Public API
 
@@ -49,8 +50,10 @@ Threading model:
 
 | Method | Path        | Behavior                                            |
 |--------|-------------|-----------------------------------------------------|
-| GET    | `/health`   | Liveness probe — always 200 if server is up         |
-| GET    | `/status`   | Full diagnostics: device, model, uptime, segments   |
+| GET    | `/health`   | Alias for `/ready`. Back-compat for callers predating the liveness/readiness split. 200 + readiness breakdown or 503 + reason. |
+| GET    | `/live`     | Liveness probe. 200 + {status:alive, service, pid} as long as the HTTP server is up. Never 503. |
+| GET    | `/ready`    | Readiness probe (K8s `readinessProbe` shape). 200 when VAD + whisper binary + whisper model + publisher are all initialized; 503 + readiness breakdown + reason otherwise. |
+| GET    | `/status`   | Full diagnostics: device, model, uptime, segments, per-component whisper booleans, `last_segment_ms`, `segment_timing` (count/max/p50/p95 + bucket distribution), dropped segments, in-flight transcriptions |
 | GET    | `/config`   | Current effective config                            |
 | GET    | `/help`     | Discover the audiod HTTP API surface as JSON                   |
 | POST   | `/start`    | Start capture loop (idempotent)                     |
@@ -186,7 +189,7 @@ percent display.
 
 ## Tests
 
-`pytest tests/` — 137 cases across 17 files. Coverage:
+`pytest tests/` — 146 cases across 18 files. Coverage:
 
 - `test_capture.py` — ALSA frame size, period math
 - `test_vad.py` / `test_vad_onnx.py` — VAD thresholds, ONNX session lifecycle
@@ -196,12 +199,32 @@ percent display.
 - `test_ptt.py` / `test_ptt_edge.py` — hotkey, evdev error paths
 - `test_publish_ws.py` — WebSocket fan-out, multi-client
 - `test_status_endpoint.py` — `/status` JSON shape, unset-pipeline case
-- `test_event_schema_conformance.py` — event JSON contract stability
+- `test_live_ready_probes.py` — `/live` vs `/ready` split, `/health` back-compat alias (v1.1)
 - `test_health_startup_probe.py` — `/health` 200/503 contract, three `is_ready()` shapes
 - `test_reload_and_backpressure.py` — `/reload` hot-swap, dropped-segment counter
 - `test_control_endpoints.py` — `/start /stop /restart /ptt /reload` JSON shape
 - `test_client.py` / `test_ws_stream.py` — sync HTTP + async WS client wiring
 - `test_real_audio_jfk.py` — real JFK sample (skipped if fixture missing)
+
+## v1.1 changelog (2026-06-30)
+
+- **Explicit liveness/readiness split.** Added `GET /live` and
+  `GET /ready`. `/live` is the orchestrator restart decision
+  (200 as long as the HTTP server can answer; never 503).
+  `/ready` is the orchestrator traffic-routing decision
+  (200 only when VAD + whisper binary + whisper model + publisher
+  are all initialized; 503 + breakdown + reason otherwise).
+- **`/health` is now a back-compat alias for `/ready`.** Same
+  response shape as before. New callers should poll `/ready`
+  directly so the contract is self-documenting.
+- **`/help` surfaces `/live` and `/ready`.** The `/health`
+  description now says it's an alias.
+- **Why this matters:** a K8s `livenessProbe` should not fail
+  when the model is briefly missing (restarting won't help);
+  only `readinessProbe` should. Before v1.1 the two signals
+  were collapsed on `/health`, which made orchestrators either
+  too eager to restart (liveness) or too willing to send traffic
+  to a not-yet-ready pod (readiness).
 
 ## v1.0 changelog (2026-06-29)
 
@@ -262,3 +285,13 @@ percent display.
 - New `Services/dan-glasses-app/static/audiod_demo.html` — drop-in
   browser demo of the full control + stream contract.
 - Test count: 101 → 121 (21 new, 0 regressions).
+
+## v1.1 changelog (2026-06-30)
+
+- **Liveness / readiness split.** `/live` is now the dedicated liveness probe: 200 + `{status:alive, service, pid}` as long as the HTTP server is up. Never 503. Decisions about process restarts belong here.
+- **`/ready` is the dedicated readiness probe.** K8s `readinessProbe` shape: 200 + `{status:ok, readiness:{vad, whisper_binary, whisper_model, publisher, running}}` when fully initialized; 503 + same `readiness` breakdown + a human-readable `reason` otherwise.
+- **`/health` is now an alias for `/ready`** so callers that predated the split still see the existing 200/503 readiness contract. Both paths return the same body shape.
+- The readiness breakdown's `whisper` boolean was split into `whisper_binary` (CLI on disk) and `whisper_model` (model file on disk). That distinction lets an operator see at a glance whether the failure is "no CLI" or "no model" without diffing two path strings.
+- New `tests/test_live_ready_probes.py` — 9 cases pinning `/live`-never-503s, the `/ready` breakdown shape and reason strings, the missing-model readiness path, and the back-compat `/health` alias.
+- `/help` endpoint updated: documents `/live` and `/ready` separately, calls out that `/health` is the alias, and distinguishes `config_keys_live` vs `config_keys_restart_only`.
+- Test count: 137 → 150 (9 new live/ready + 4 prior-passing cases not counted in v0.9 metric; 1 sandbox-skipped, 0 regressions).
