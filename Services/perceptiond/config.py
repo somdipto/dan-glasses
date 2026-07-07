@@ -36,6 +36,16 @@ DEFAULT_CONFIG = {
     "power": {
         "mode": "watchful",
     },
+    "dedup": {
+        # v7.0: scene-change gate. Skip VLM if motion score hasn't changed
+        # by at least `threshold` from the last triggered frame.
+        # 0.0 = disabled (always run VLM on salient frames).
+        # 0.02 = suppress ~80% of duplicate "orange circle" VLM calls in
+        # mock-capture dev mode while still firing on real scene changes.
+        "threshold": 0.02,
+        # Sliding window of recent motion scores for the rolling baseline.
+        "window": 5,
+    },
 }
 
 

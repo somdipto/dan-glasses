@@ -1,0 +1,154 @@
+{
+  "label": "self-test",
+  "ts": "2026-07-05T04:51:31Z",
+  "config": {
+    "model": "/home/workspace/danlab-multimodal/models/LFM2.5-VL-450M-Q4_0.gguf",
+    "mmproj": "/home/workspace/danlab-multimodal/models/mmproj-LFM2.5-VL-450m-F16.gguf",
+    "native_cli": "/home/workspace/danlab-multimodal/llama.cpp/build/bin/llama-mtmd-cli",
+    "stub_cli": "/bin/echo",
+    "timeout_s": 120,
+    "runs_per_image": 2,
+    "image_count": 3
+  },
+  "native": {
+    "summary": {
+      "runs": 6,
+      "ok": 6,
+      "failed": 0,
+      "min_s": 8.9277,
+      "max_s": 13.0919,
+      "mean_s": 10.8446,
+      "median_s": 10.5136,
+      "stdev_s": 1.4205
+    },
+    "results": [
+      {
+        "image_id": "synthetic-0/r0",
+        "ok": true,
+        "error": null,
+        "latency_s": 13.0919,
+        "description": "The image shows a simple graphic with a single, solid maroon square centered on a solid blue background. There are no people, objects, or text present in the image.",
+        "description_len": 164,
+        "path": "native"
+      },
+      {
+        "image_id": "synthetic-0/r1",
+        "ok": true,
+        "error": null,
+        "latency_s": 11.0267,
+        "description": "The image shows a simple graphic with a single, solid red square centered on a plain blue background. There are no people, objects, text, or activities depicted in this image.",
+        "description_len": 175,
+        "path": "native"
+      },
+      {
+        "image_id": "synthetic-1/r0",
+        "ok": true,
+        "error": null,
+        "latency_s": 12.1467,
+        "description": "The image shows a simple graphic with a yellow background and a blue square in the center. There are no people, objects, or text visible in the image.",
+        "description_len": 150,
+        "path": "native"
+      },
+      {
+        "image_id": "synthetic-1/r1",
+        "ok": true,
+        "error": null,
+        "latency_s": 8.9277,
+        "description": "The image shows a simple graphic with a yellow background and a single blue square centered in the middle. There are no people, objects, or text present in the image.",
+        "description_len": 166,
+        "path": "native"
+      },
+      {
+        "image_id": "synthetic-2/r0",
+        "ok": true,
+        "error": null,
+        "latency_s": 9.8744,
+        "description": "The image shows a simple graphic with a single, solid red square centered on a solid blue background. There are no people, objects, text, or activities depicted in this image.",
+        "description_len": 175,
+        "path": "native"
+      },
+      {
+        "image_id": "synthetic-2/r1",
+        "ok": true,
+        "error": null,
+        "latency_s": 10.0005,
+        "description": "The image shows a simple graphic with a solid blue background and a single red square centered in the middle. There are no people, objects, or text present in the image.",
+        "description_len": 169,
+        "path": "native"
+      }
+    ]
+  },
+  "stub": {
+    "summary": {
+      "runs": 6,
+      "ok": 6,
+      "failed": 0,
+      "min_s": 0.003,
+      "max_s": 0.007,
+      "mean_s": 0.0049,
+      "median_s": 0.0052,
+      "stdev_s": 0.0015
+    },
+    "results": [
+      {
+        "image_id": "synthetic-0/r0",
+        "ok": true,
+        "error": null,
+        "latency_s": 0.007,
+        "description": "-ngl 99 -c 2048 -b 1 -ub 1 -t 8 -fa 0 --no-warmup",
+        "description_len": 49,
+        "path": "stub"
+      },
+      {
+        "image_id": "synthetic-0/r1",
+        "ok": true,
+        "error": null,
+        "latency_s": 0.006,
+        "description": "-ngl 99 -c 2048 -b 1 -ub 1 -t 8 -fa 0 --no-warmup",
+        "description_len": 49,
+        "path": "stub"
+      },
+      {
+        "image_id": "synthetic-1/r0",
+        "ok": true,
+        "error": null,
+        "latency_s": 0.006,
+        "description": "-ngl 99 -c 2048 -b 1 -ub 1 -t 8 -fa 0 --no-warmup",
+        "description_len": 49,
+        "path": "stub"
+      },
+      {
+        "image_id": "synthetic-1/r1",
+        "ok": true,
+        "error": null,
+        "latency_s": 0.0045,
+        "description": "-ngl 99 -c 2048 -b 1 -ub 1 -t 8 -fa 0 --no-warmup",
+        "description_len": 49,
+        "path": "stub"
+      },
+      {
+        "image_id": "synthetic-2/r0",
+        "ok": true,
+        "error": null,
+        "latency_s": 0.0031,
+        "description": "-ngl 99 -c 2048 -b 1 -ub 1 -t 8 -fa 0 --no-warmup",
+        "description_len": 49,
+        "path": "stub"
+      },
+      {
+        "image_id": "synthetic-2/r1",
+        "ok": true,
+        "error": null,
+        "latency_s": 0.003,
+        "description": "-ngl 99 -c 2048 -b 1 -ub 1 -t 8 -fa 0 --no-warmup",
+        "description_len": 49,
+        "path": "stub"
+      }
+    ]
+  },
+  "parity": {
+    "ok": true,
+    "native_ok": 6,
+    "stub_ok": 6
+  }
+}

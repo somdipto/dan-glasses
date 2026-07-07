@@ -1,0 +1,99 @@
+{
+  "label": "self-test",
+  "timestamp": "2026-07-05T04:53:44Z",
+  "mode": "stub",
+  "runs_per_frame": 2,
+  "frames": 4,
+  "config": {
+    "llama_cli_path": "/home/workspace/dan-glasses/Services/perceptiond/bench/stub_mtmd.sh",
+    "model_path": "/fake/LFM2.5-VL-450M-Q4_0.gguf",
+    "mmproj_path": "/fake/mmproj-LFM2.5-VL-450m-F16.gguf",
+    "is_lfm2_5": true
+  },
+  "results": [
+    {
+      "image_id": "d53264b9/r0",
+      "ok": false,
+      "error": null,
+      "latency_s": 0.0322,
+      "description": null,
+      "description_len": 0
+    },
+    {
+      "image_id": "5e028d3a/r1",
+      "ok": false,
+      "error": null,
+      "latency_s": 0.0077,
+      "description": null,
+      "description_len": 0
+    },
+    {
+      "image_id": "14b8b51f/r0",
+      "ok": false,
+      "error": null,
+      "latency_s": 0.0074,
+      "description": null,
+      "description_len": 0
+    },
+    {
+      "image_id": "3f4f9dbd/r1",
+      "ok": false,
+      "error": null,
+      "latency_s": 0.0071,
+      "description": null,
+      "description_len": 0
+    },
+    {
+      "image_id": "d9ffd192/r0",
+      "ok": false,
+      "error": null,
+      "latency_s": 0.007,
+      "description": null,
+      "description_len": 0
+    },
+    {
+      "image_id": "b63a2942/r1",
+      "ok": false,
+      "error": null,
+      "latency_s": 0.007,
+      "description": null,
+      "description_len": 0
+    },
+    {
+      "image_id": "bd2eae15/r0",
+      "ok": false,
+      "error": null,
+      "latency_s": 0.0069,
+      "description": null,
+      "description_len": 0
+    },
+    {
+      "image_id": "20e40311/r1",
+      "ok": false,
+      "error": null,
+      "latency_s": 0.0065,
+      "description": null,
+      "description_len": 0
+    }
+  ],
+  "summary": {
+    "total": 8,
+    "ok": 0,
+    "failed": 8,
+    "ok_rate": 0.0,
+    "latency_s": {
+      "min": 0.0065,
+      "p50": 0.0071,
+      "p90": 0.0077,
+      "p95": 0.0322,
+      "p99": 0.0322,
+      "max": 0.0322,
+      "mean": 0.010225,
+      "stdev": 0.008886225295365856
+    }
+  },
+  "parity": {
+    "ok": true,
+    "skipped": "stub unavailable"
+  }
+}

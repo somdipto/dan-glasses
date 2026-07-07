@@ -1,0 +1,99 @@
+{
+  "label": "self-test",
+  "timestamp": "2026-07-05T04:53:03Z",
+  "mode": "stub",
+  "runs_per_frame": 2,
+  "frames": 4,
+  "config": {
+    "llama_cli_path": "/home/workspace/dan-glasses/Services/perceptiond/bench/stub_mtmd.sh",
+    "model_path": "/fake/model.gguf",
+    "mmproj_path": "/fake/mmproj.gguf",
+    "is_lfm2_5": false
+  },
+  "results": [
+    {
+      "image_id": "60895ab3/r0",
+      "ok": true,
+      "error": null,
+      "latency_s": 0.0305,
+      "description": "<|im_start|>user <image>Describe this image briefly. Focus on: people, objects, text, activities.",
+      "description_len": 97
+    },
+    {
+      "image_id": "f04aedbe/r1",
+      "ok": true,
+      "error": null,
+      "latency_s": 0.0058,
+      "description": "<|im_start|>user <image>Describe this image briefly. Focus on: people, objects, text, activities.",
+      "description_len": 97
+    },
+    {
+      "image_id": "3cbebb42/r0",
+      "ok": true,
+      "error": null,
+      "latency_s": 0.0059,
+      "description": "<|im_start|>user <image>Describe this image briefly. Focus on: people, objects, text, activities.",
+      "description_len": 97
+    },
+    {
+      "image_id": "fa858abb/r1",
+      "ok": true,
+      "error": null,
+      "latency_s": 0.0059,
+      "description": "<|im_start|>user <image>Describe this image briefly. Focus on: people, objects, text, activities.",
+      "description_len": 97
+    },
+    {
+      "image_id": "9640f4de/r0",
+      "ok": true,
+      "error": null,
+      "latency_s": 0.0068,
+      "description": "<|im_start|>user <image>Describe this image briefly. Focus on: people, objects, text, activities.",
+      "description_len": 97
+    },
+    {
+      "image_id": "b3151f5f/r1",
+      "ok": true,
+      "error": null,
+      "latency_s": 0.0056,
+      "description": "<|im_start|>user <image>Describe this image briefly. Focus on: people, objects, text, activities.",
+      "description_len": 97
+    },
+    {
+      "image_id": "370953a4/r0",
+      "ok": true,
+      "error": null,
+      "latency_s": 0.0053,
+      "description": "<|im_start|>user <image>Describe this image briefly. Focus on: people, objects, text, activities.",
+      "description_len": 97
+    },
+    {
+      "image_id": "b55c4479/r1",
+      "ok": true,
+      "error": null,
+      "latency_s": 0.0057,
+      "description": "<|im_start|>user <image>Describe this image briefly. Focus on: people, objects, text, activities.",
+      "description_len": 97
+    }
+  ],
+  "summary": {
+    "total": 8,
+    "ok": 8,
+    "failed": 0,
+    "ok_rate": 1.0,
+    "latency_s": {
+      "min": 0.0053,
+      "p50": 0.0059,
+      "p90": 0.0068,
+      "p95": 0.0305,
+      "p99": 0.0305,
+      "max": 0.0305,
+      "mean": 0.0089375,
+      "stdev": 0.008723193632085508
+    }
+  },
+  "parity": {
+    "ok": true,
+    "skipped": "stub unavailable"
+  }
+}

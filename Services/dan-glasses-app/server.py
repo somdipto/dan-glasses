@@ -58,13 +58,15 @@ class ProxyError(Exception):
     pass
 
 
-def _proxy_http(method: str, upstream_base: str, upstream_path: str, body: bytes = b"") -> tuple:
+def _proxy_http(method: str, upstream_base: str, upstream_path: str, body: bytes = b"", query: str = "") -> tuple:
     """Forward an HTTP request to an upstream daemon.
 
     `upstream_base` is the full http://host:port of the target.
     Returns (status_code, response_headers_subset, body_bytes).
     """
     url = upstream_base.rstrip("/") + upstream_path
+    if query:
+        url = url + "?" + query
     req = urllib.request.Request(url, data=body if body else None, method=method)
     if body:
         req.add_header("Content-Type", "application/json")
@@ -85,7 +87,7 @@ def _proxy_http(method: str, upstream_base: str, upstream_path: str, body: bytes
         raise ProxyError(str(e)) from e
 
 
-def _forward_to_upstream(self: "SPAHandler", upstream_base: str, subpath: str) -> None:
+def _forward_to_upstream(self: "SPAHandler", upstream_base: str, subpath: str, query: str = "") -> None:
     """Generic /api/<service>/* → upstream HTTP forwarder."""
     body = b""
     if self.command == "POST":
@@ -93,15 +95,17 @@ def _forward_to_upstream(self: "SPAHandler", upstream_base: str, subpath: str) -
         if length:
             body = self.rfile.read(length)
     try:
-        status, hdrs, payload = _proxy_http(self.command, upstream_base, subpath, body)
+        status, hdrs, payload = _proxy_http(self.command, upstream_base, subpath, body, query)
     except ProxyError as e:
         self._send_json(502, {"error": "upstream unreachable", "detail": str(e), "upstream": upstream_base})
         return
     self.send_response(status)
     for k, v in hdrs.items():
+        # Don't echo upstream CORS — we set our own * below.
+        if k.lower() == "access-control-allow-origin":
+            continue
         self.send_header(k, v)
     self.send_header("Content-Length", str(len(payload)))
-    self.send_header("Access-Control-Allow-Origin", "*")
     self.end_headers()
     self.wfile.write(payload)
 
@@ -260,7 +264,8 @@ def _serve_audiod_proxy(self: "SPAHandler") -> None:
     if subpath == "/stream":
         return _serve_ws_upgrade(self, AUDIOD_WS_HOST, AUDIOD_WS_PORT, "/stream")
 
-    return _forward_to_upstream(self, AUDIOD_HTTP, subpath)
+    parsed = urlparse(self.path)
+    return _forward_to_upstream(self, AUDIOD_HTTP, subpath, parsed.query)
 
 
 def _serve_perceptiond_proxy(self: "SPAHandler") -> None:
@@ -271,6 +276,9 @@ def _serve_perceptiond_proxy(self: "SPAHandler") -> None:
       GET    /api/perceptiond/status
       GET    /api/perceptiond/descriptions?count=N
       GET    /api/perceptiond/frame.jpg   (single JPEG snapshot)
+      GET    /api/perceptiond/frames/<image_id>.jpg  (per-event thumbnail; older ids may be evicted)
+      GET    /api/perceptiond/events      (Server-Sent Events stream of new descriptions; replay of last 20)
+      GET    /api/perceptiond/stats       (v7.0 telemetry summary: scene_skips, vlm_pass_rate, etc.)
       POST   /api/perceptiond/mode        (body: {"mode": "idle"|"watchful"|"active"})
 
     Note: /stream is intentionally NOT proxied. MJPEG is a long-lived
@@ -279,6 +287,10 @@ def _serve_perceptiond_proxy(self: "SPAHandler") -> None:
     hits PERCEPTIOND_HTTP/stream directly when running outside Tauri.
     Inside the Tauri webview (production) the stream command is exposed
     separately on the Tauri bridge.
+
+    The /events endpoint is a Server-Sent Events stream. It is forwarded
+    to the upstream as a regular HTTP GET; SSE works over plain HTTP and
+    the proxy does not buffer it (chunked transfer).
     """
     parsed = urlparse(self.path)
     subpath = parsed.path[len("/api/perceptiond"):] or "/"
@@ -288,16 +300,19 @@ def _serve_perceptiond_proxy(self: "SPAHandler") -> None:
             "http_upstream": PERCEPTIOND_HTTP,
             "routes": {
                 "GET /api/perceptiond/health": "perceptiond liveness",
-                "GET /api/perceptiond/status": "running mode, frame counters, VLM queue",
+                "GET /api/perceptiond/status": "running mode, frame counters, VLM queue, scene-gate telemetry",
                 "GET /api/perceptiond/descriptions?count=N": "last N descriptions",
                 "GET /api/perceptiond/frame.jpg": "single JPEG snapshot of latest frame",
+                "GET /api/perceptiond/frames/<image_id>.jpg": "per-event thumbnail (ring-buffered, may be evicted)",
+                "GET /api/perceptiond/events": "SSE stream of new descriptions (replays last 20 on connect)",
+                "GET /api/perceptiond/stats": "v7.0 telemetry (scene_skips, vlm_pass_rate, skip_rate, scene_gate stats)",
                 "POST /api/perceptiond/mode": "set mode (idle|watchful|active)",
             },
             "stream": "Live MJPEG at " + PERCEPTIOND_HTTP + "/stream (not proxied — connect directly)",
         })
         return
 
-    return _forward_to_upstream(self, PERCEPTIOND_HTTP, subpath)
+    return _forward_to_upstream(self, PERCEPTIOND_HTTP, subpath, parsed.query)
 
 
 def _serve_memoryd_proxy(self: "SPAHandler") -> None:
@@ -322,7 +337,8 @@ def _serve_memoryd_proxy(self: "SPAHandler") -> None:
             },
         })
         return
-    return _forward_to_upstream(self, MEMORYD_HTTP, subpath)
+    parsed = urlparse(self.path)
+    return _forward_to_upstream(self, MEMORYD_HTTP, subpath, parsed.query)
 
 
 def _serve_toold_proxy(self: "SPAHandler") -> None:
@@ -347,7 +363,8 @@ def _serve_toold_proxy(self: "SPAHandler") -> None:
             },
         })
         return
-    return _forward_to_upstream(self, TOOLD_HTTP, subpath)
+    parsed = urlparse(self.path)
+    return _forward_to_upstream(self, TOOLD_HTTP, subpath, parsed.query)
 
 
 def _serve_ttsd_proxy(self: "SPAHandler") -> None:
@@ -370,7 +387,7 @@ def _serve_ttsd_proxy(self: "SPAHandler") -> None:
             },
         })
         return
-    return _forward_to_upstream(self, TTSD_HTTP, subpath)
+    return _forward_to_upstream(self, TTSD_HTTP, subpath, parsed.query)
 
 
 def _send_json(self: "SPAHandler", status: int, obj: dict) -> None:

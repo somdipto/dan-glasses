@@ -1,0 +1,25 @@
+{
+  "label": "self-test",
+  "timestamp": "2026-07-05T04:52:15Z",
+  "mode": "stub",
+  "runs_per_frame": 2,
+  "frames": 4,
+  "config": {
+    "llama_cli_path": "/home/workspace/dan-glasses/Services/perceptiond/bench/stub_mtmd.sh",
+    "model_path": "/fake/model.gguf",
+    "mmproj_path": "/fake/mmproj.gguf",
+    "is_lfm2_5": false
+  },
+  "results": [],
+  "summary": {
+    "total": 0,
+    "ok": 0,
+    "failed": 0,
+    "ok_rate": 0.0,
+    "latency_s": {}
+  },
+  "parity": {
+    "ok": true,
+    "skipped": "stub unavailable"
+  }
+}

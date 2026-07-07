@@ -48,43 +48,25 @@ def _drive(handler_cls, method, path, body=b"", headers=None):
     """
     cli, srv_sock = _make_pair()
     headers = headers or {}
-    # Build the raw request line + headers
-    req_lines = [f"{method} {path} HTTP/1.1", "Host: localhost"]
+    if body and "Content-Length" not in headers:
+        headers = {**headers, "Content-Length": str(len(body))}
+    head_lines = [f"{method} {path} HTTP/1.1", "Host: localhost"]
     for k, v in headers.items():
-        req_lines.append(f"{k}: {v}")
-    if body:
-        req_lines.append(f"Content-Length: {len(body)}")
-    req_lines.append("")
-    if body:
-        req_lines.append("")
-    raw = ("\r\n".join(req_lines) + (body.decode("latin-1") if isinstance(body, bytes) else body)).encode("latin-1")
+        head_lines.append(f"{k}: {v}")
+    head_lines.append("")
+    head_bytes = ("\r\n".join(head_lines) + "\r\n").encode("latin-1")
+    raw = head_bytes + (body or b"")
 
-    # Stuff the request bytes into the server-side socket.
-    # We send from the client side; the handler reads from its own socket.
     cli.sendall(raw)
     cli.shutdown(socket.SHUT_WR)
 
-    # BaseHTTPRequestHandler.__init__ auto-calls self.handle(). We want
-    # manual dispatch so we instantiate via __new__ + setup() and parse
-    # the request ourselves before invoking do_GET/do_POST.
     addr = ("127.0.0.1", 0)
     handler = handler_cls.__new__(handler_cls)
     handler.request = srv_sock
     handler.client_address = addr
     handler.server = None
     handler.setup()
-    handler.parse_request()
-    try:
-        if method == "OPTIONS":
-            handler.do_OPTIONS()
-        elif method == "GET":
-            handler.do_GET()
-        elif method == "POST":
-            handler.do_POST()
-        else:
-            handler.send_error(405)
-    except BrokenPipeError:
-        pass
+    handler.handle_one_request()
 
     # Read the response back from the client socket.
     srv_sock.close()

@@ -27,3 +27,7 @@ server:
 
 power:
   mode: watchful
+
+dedup:
+  threshold: 0.02  # v7.0: skip VLM if motion score delta < 2% from last trigger
+  window: 5        # rolling-baseline window for scene-change detection

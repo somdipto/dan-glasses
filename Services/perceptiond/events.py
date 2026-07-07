@@ -17,6 +17,102 @@ from typing import Optional, List, Deque
 
 
 RING_BUFFER_SIZE = 200  # max descriptions held in memory
+FRAME_BUFFER_SIZE = 50   # max per-event JPEGs (thumbnails) kept for /frames/<id>.jpg
+
+# v7.0 — SSE /events pub-sub
+EVENT_BUS_REPLAY = 20         # last N descriptions replayed to a new subscriber
+EVENT_BUS_PER_SUBSCRIBER = 64 # per-subscriber bounded queue (overwrite-on-full)
+
+
+class EventBus:
+    """In-process pub/sub for live description streaming.
+
+    Each subscriber gets a private bounded deque. On attach, the bus replays
+    the last N events from the publisher's ring buffer so the new client
+    renders history immediately. New events from `publish()` are fanned out
+    synchronously under a short lock; if a subscriber's queue is full, the
+    oldest entry is dropped to keep the publisher's hot path non-blocking.
+    """
+
+    def __init__(self, replay: int = EVENT_BUS_REPLAY, per_subscriber_cap: int = EVENT_BUS_PER_SUBSCRIBER):
+        self._lock = threading.Lock()
+        self._subscribers: List[deque] = []
+        self._replay = max(0, replay)
+        self._per_subscriber_cap = max(1, per_subscriber_cap)
+
+    def attach(self, ring) -> tuple:
+        """Register a new subscriber; return (queue, replay_count)."""
+        q: Deque[dict] = deque(maxlen=self._per_subscriber_cap)
+        with self._lock:
+            self._subscribers.append(q)
+            replay_items = list(ring)[-self._replay:]
+        for item in replay_items:
+            q.append(item)
+        return q, len(replay_items)
+
+    def detach(self, q) -> None:
+        with self._lock:
+            try:
+                self._subscribers.remove(q)
+            except ValueError:
+                pass
+
+    def publish(self, event: dict) -> None:
+        """Fan out an event to every live subscriber; non-blocking."""
+        with self._lock:
+            subs = list(self._subscribers)
+        for q in subs:
+            # Bounded queue drops oldest when full, so we never block here.
+            q.append(dict(event))
+
+    def subscriber_count(self) -> int:
+        with self._lock:
+            return len(self._subscribers)
+
+
+class FrameStore:
+    """Thread-safe ring buffer of per-event JPEG bytes keyed by image_id.
+
+    Bounded by FRAME_BUFFER_SIZE (insertion-ordered; oldest evicted first).
+    Used to back GET /frames/<image_id>.jpg so the UI can show what the VLM saw.
+    """
+
+    def __init__(self, capacity: int = FRAME_BUFFER_SIZE):
+        self._capacity = capacity
+        self._lock = threading.Lock()
+        # Python 3.7+ dict preserves insertion order - used as ordered map.
+        self._frames = {}
+
+    def put(self, image_id: str, jpeg: bytes) -> None:
+        """Store a JPEG under image_id; evict oldest if over capacity.
+
+        Validates JPEG SOI marker (0xFFD8) so consumers can trust GET output.
+        Rejects empty image_id, None bytes, and non-JPEG payloads.
+        """
+        if not image_id or jpeg is None or len(jpeg) < 2 or jpeg[:2] != b"\xff\xd8":
+            return
+        with self._lock:
+            # If image_id already present, remove first to re-insert at tail.
+            self._frames.pop(image_id, None)
+            self._frames[image_id] = jpeg
+            while len(self._frames) > self._capacity:
+                # FIFO eviction: pop oldest inserted key.
+                # Note: dict.popitem() has no `last` kwarg (that's OrderedDict).
+                oldest = next(iter(self._frames))
+                self._frames.pop(oldest, None)
+
+    def get(self, image_id: str):
+        """Return JPEG bytes for image_id or None."""
+        with self._lock:
+            return self._frames.get(image_id)
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._frames)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._frames.clear()
 
 
 class DescriptionPublisher:
@@ -34,6 +130,8 @@ class DescriptionPublisher:
         self._event_count = 0
         self._lock = threading.Lock()
         self._ring: Deque[dict] = deque(maxlen=ring_size)
+        # v7.0: in-process pub/sub for the /events SSE stream
+        self.event_bus = EventBus()
 
         if mode == "socket":
             self._setup_socket()
@@ -126,6 +224,21 @@ class PerceptiondServer:
             # TCP thread not started yet — will be wired in _serve_tcp
             self._pending_capture = capture
 
+    def set_frame_store(self, frame_store):
+        """Set FrameStore reference for /frames/<image_id>.jpg endpoint."""
+        self._frame_store = frame_store
+        if self._tcp_server is not None:
+            self._tcp_server.frame_store = frame_store
+        else:
+            self._pending_frame_store = frame_store
+
+    def _resolve_frame_store(self):
+        """Return FrameStore from server, falling back to pending."""
+        fs = getattr(self, "_frame_store", None)
+        if fs is not None:
+            return fs
+        return getattr(self, "_pending_frame_store", None)
+
     def start(self):
         """Start HTTP servers."""
         self._running = True
@@ -188,6 +301,31 @@ class PerceptiondServer:
                                 self.send_header("Access-Control-Allow-Origin", "*")
                                 self.end_headers()
                                 self.wfile.write(jpeg)
+                    elif path.startswith("/frames/") and path.endswith(".jpg"):
+                        # /frames/<image_id>.jpg - per-event thumbnail
+                        image_id = path[len("/frames/"):-len(".jpg")]
+                        if not image_id or not all(c in "0123456789abcdef" for c in image_id):
+                            self._send_json(400, {"error": "invalid image_id"})
+                        else:
+                            frame_store = getattr(self.server, "frame_store", None)
+                            if frame_store is None:
+                                server_obj = getattr(self.server, "_server_ref", None)
+                                if server_obj is not None:
+                                    frame_store = server_obj._resolve_frame_store()
+                            if frame_store is None:
+                                self._send_json(503, {"error": "no frame store"})
+                            else:
+                                jpeg = frame_store.get(image_id)
+                                if jpeg is None:
+                                    self._send_json(404, {"error": "frame not found", "image_id": image_id})
+                                else:
+                                    self.send_response(200)
+                                    self.send_header("Content-Type", "image/jpeg")
+                                    self.send_header("Content-Length", str(len(jpeg)))
+                                    self.send_header("Cache-Control", "public, max-age=3600")
+                                    self.send_header("Access-Control-Allow-Origin", "*")
+                                    self.end_headers()
+                                    self.wfile.write(jpeg)
                     elif path == "/stream":
                         self._serve_mjpeg_stream()
                     elif path == "/status":
@@ -215,11 +353,188 @@ class PerceptiondServer:
                             })
                         else:
                             self._send_json(200, {"count": 0, "descriptions": []})
+                    elif path == "/events":
+                        # v7.0: Server-Sent Events stream of new descriptions.
+                        self._serve_sse_stream()
+                    elif path == "/stats":
+                        # v7.0: Cumulative telemetry summary. Delegates to
+                        # pipeline.get_detailed_status() so /stats always
+                        # stays in lockstep with /status fields.
+                        pipeline = getattr(self.server, "pipeline", None)
+                        if pipeline is None:
+                            server_obj = getattr(self.server, "_server_ref", None)
+                            if server_obj is not None:
+                                pipeline = getattr(server_obj, "_pipeline", None)
+                        if pipeline is None:
+                            self._send_json(503, {"error": "no pipeline"})
+                        else:
+                            # Prefer get_detailed_status() for full v7.0
+                            # telemetry; fall back to get_status() for mocks
+                            # and older pipelines. CRITICAL: call the method
+                            # to get the dict — get_detailed_status exists
+                            # on the live pipeline but the bound method is
+                            # not callable via .get() and would 500.
+                            st_getter = getattr(pipeline, "get_detailed_status", None) or pipeline.get_status
+                            st = st_getter()
+                            frames = st.get("frames_processed", 0)
+                            salient = st.get("salient_frames", 0)
+                            descs = st.get("descriptions", 0)
+                            vlm_invoc = st.get("vlm_invocations", 0)
+                            scene_skips = st.get("scene_skips", 0)
+                            publisher = getattr(pipeline, "publisher", None)
+                            ring_size = len(publisher) if publisher is not None else 0
+                            self._send_json(200, {
+                                "frames_processed": frames,
+                                "salient_frames": salient,
+                                "descriptions": descs,
+                                "vlm_invocations": vlm_invoc,
+                                "scene_skips": scene_skips,
+                                "scene_threshold": st.get("scene_threshold", 0.02),
+                                "motion_score": st.get("motion_score", 0.0),
+                                "face_count": st.get("face_count", 0),
+                                "last_trigger_kind": st.get("last_trigger_kind", "none"),
+                                "deduped_count": st.get("deduped_count", 0),
+                                "dedup_skip_count": st.get("dedup_skip_count", 0),
+                                "vlm_busy": st.get("vlm_busy", False),
+                                "vlm_queue_depth": st.get("vlm_queue_depth", 0),
+                                "scene_gate": st.get("scene_gate", {}),
+                                "sse_subscribers": st.get("sse_subscribers", 0),
+                                "salience_ratio": (salient / frames) if frames > 0 else 0.0,
+                                "vlm_pass_rate": (vlm_invoc / frames) if frames > 0 else 0.0,
+                                "skip_rate": (scene_skips / salient) if salient > 0 else 0.0,
+                                "ring_buffer_size": ring_size,
+                                "ring_buffer_cap": RING_BUFFER_SIZE,
+                            })
                     else:
                         self._send_json(404, {"error": "not found", "path": path})
                 except Exception as e:
                     try:
                         self._send_json(500, {"error": str(e)})
+                    except Exception:
+                        pass
+
+            def _serve_stats_summary(self):
+                """v7.0 — aggregate stats snapshot for dashboards / healthchecks."""
+                pipeline = getattr(self.server, "pipeline", None)
+                if pipeline is None:
+                    server_obj = getattr(self.server, "_server_ref", None)
+                    if server_obj is not None:
+                        pipeline = getattr(server_obj, "_pipeline", None)
+                if pipeline is None:
+                    self._send_json(503, {"error": "no pipeline"})
+                    return
+                st = pipeline.get_status()
+                subs = 0
+                try:
+                    subs = pipeline.publisher.event_bus.subscriber_count()
+                except Exception:
+                    pass
+                vlm_invoc = st.get("vlm_invocations", 0)
+                frames = st.get("frames_processed", 0)
+                descs = st.get("descriptions", 0)
+                scene_skips = st.get("scene_skips", 0)
+                self._send_json(200, {
+                    "mode": st.get("mode"),
+                    "running": st.get("running"),
+                    "frames": frames,
+                    "salient": st.get("salient_frames", 0),
+                    "descriptions": descs,
+                    "vlm_invocations": vlm_invoc,
+                    "vlm_skip_rate": (
+                        1.0 - (vlm_invoc / max(1, frames)) if frames else 0.0
+                    ),
+                    "scene_skips": scene_skips,
+                    "vlm_busy": st.get("vlm_busy", False),
+                    "vlm_queue_depth": st.get("vlm_queue_depth", 0),
+                    "scene_gate": st.get("scene_gate", {}),
+                    "sse_subscribers": subs,
+                    "ring_buffer_size": RING_BUFFER_SIZE,
+                })
+
+            def _serve_sse_stream(self):
+                """v7.0 — Server-Sent Events stream of new descriptions.
+
+                On subscribe, replays the last N descriptions so the client
+                renders history immediately. Then streams new events as they
+                arrive, one per `data:` frame, until the client disconnects.
+                Heartbeat `:` comments every 15s keep proxies from killing
+                the idle connection.
+                """
+                pipeline = getattr(self.server, "pipeline", None)
+                if pipeline is None:
+                    server_obj = getattr(self.server, "_server_ref", None)
+                    if server_obj is not None:
+                        pipeline = getattr(server_obj, "_pipeline", None)
+                if pipeline is None or not pipeline.publisher:
+                    self._send_json(503, {"error": "no pipeline"})
+                    return
+                pub = pipeline.publisher
+                # attach() returns (queue, replay_count). The queue is
+                # pre-populated with the last N ring-buffer events; the
+                # count is informational. We use the SAME queue for both
+                # the replay and the live stream — new events are appended
+                # to it by publish() via the EventBus fan-out.
+                my_q, replay_n = pub.event_bus.attach(pub._ring)
+                # Track for cleanup. List of (handler, queue) tuples so
+                # multiple concurrent SSE clients can coexist.
+                if not hasattr(self.server, "_sse_subscriber_queues"):
+                    self.server._sse_subscriber_queues = []
+                self.server._sse_subscriber_queues.append((self, my_q))
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Connection", "close")
+                    self.send_header("X-Accel-Buffering", "no")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    # Drain replay: items already on my_q from attach().
+                    # Emit `event: description\nid: <id>\ndata: <json>\n\n`.
+                    sent_ids = set()
+                    while my_q:
+                        item = my_q.popleft()
+                        eid = item.get("event_id", 0)
+                        if eid and eid in sent_ids:
+                            continue
+                        if eid:
+                            sent_ids.add(eid)
+                        payload = json.dumps(item)
+                        block = f"event: description\nid: {eid}\ndata: {payload}\n\n".encode("utf-8")
+                        self.wfile.write(block)
+                        self.wfile.flush()
+                    last_seen_id = max(sent_ids) if sent_ids else 0
+                    last_heartbeat = time.time()
+                    while True:
+                        # Drain any new items on the live queue
+                        while my_q:
+                            item = my_q.popleft()
+                            eid = item.get("event_id", 0)
+                            if eid and eid == last_seen_id:
+                                continue
+                            if eid:
+                                last_seen_id = eid
+                            payload = json.dumps(item)
+                            block = f"event: description\nid: {eid}\ndata: {payload}\n\n".encode("utf-8")
+                            self.wfile.write(block)
+                            self.wfile.flush()
+                        # Heartbeat
+                        now = time.time()
+                        if now - last_heartbeat > 15.0:
+                            self.wfile.write(b": ping\n\n")
+                            self.wfile.flush()
+                            last_heartbeat = now
+                        time.sleep(0.25)
+                except (BrokenPipeError, ConnectionResetError):
+                    return
+                except Exception:
+                    return
+                finally:
+                    try:
+                        pub.event_bus.detach(my_q)
+                    except Exception:
+                        pass
+                    try:
+                        self.server._sse_subscriber_queues.remove((self, my_q))
                     except Exception:
                         pass
 
@@ -310,6 +625,7 @@ class PerceptiondServer:
             self._tcp_server._server_ref = self
             self._tcp_server.pipeline = self._pipeline
             self._tcp_server.capture = getattr(self, "_capture", None) or getattr(self, "_pending_capture", None)
+            self._tcp_server.frame_store = getattr(self, "_frame_store", None) or getattr(self, "_pending_frame_store", None)
             self._tcp_server.serve_forever()
         except Exception as e:
             print(f"perceptiond: TCP server error: {e}", flush=True)
