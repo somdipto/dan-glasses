@@ -1,0 +1,30 @@
+#!/bin/sh
+# postrm for dan-glasses-daemons
+set -e
+
+case "$1" in
+  purge)
+    # We deliberately do NOT delete /var/lib/dan-glasses/ on purge; that
+    # holds the memoryd sqlite DB and user data. Remove only the cached
+    # state we created.
+    rm -rf /var/cache/dan-glasses 2>/dev/null || true
+    for u in dan-glasses-audiod \
+             dan-glasses-perceptiond \
+             dan-glasses-memoryd \
+             dan-glasses-toold \
+             dan-glasses-ttsd \
+             dan-glasses-os-toold; do
+      deb-systemd-helper purge "$u.service" >/dev/null 2>&1 || true
+    done
+    ;;
+  remove|upgrade|failed-upgrade|disappear)
+    ;;
+  *)
+    echo "postrm called with unknown argument \`$1'" >&2
+    exit 1
+    ;;
+esac
+
+#DEBHELPER#
+
+exit 0

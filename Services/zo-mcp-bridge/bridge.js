@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * zo-mcp-bridge.js
  * Bridges OpenClaw tool calls to Zo MCP API
@@ -15,6 +15,7 @@ if (!AUTH_TOKEN) {
 }
 
 const TOOL_CACHE = new Map();
+const START_TS = Date.now();
 
 async function callZoTool(toolName, args) {
   const body = {
@@ -89,6 +90,18 @@ async function main() {
     const server = Bun.serve({
       port,
       async fetch(req) {
+        const url = new URL(req.url);
+
+        // Liveness probe for supervisor / external health checks.
+        if (url.pathname === "/healthz" || url.pathname === "/health") {
+          return Response.json({
+            ok: true,
+            service: "zo-mcp-bridge",
+            tools_cached: TOOL_CACHE.size,
+            uptime_ms: Date.now() - START_TS,
+          });
+        }
+
         try {
           const body = await req.json();
           

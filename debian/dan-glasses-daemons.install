@@ -1,0 +1,32 @@
+Services/audiod/audiod.py				usr/lib/dan-glasses/audiod/
+Services/audiod/capture.py				usr/lib/dan-glasses/audiod/
+Services/audiod/ptt.py					usr/lib/dan-glasses/audiod/
+Services/audiod/transcription.py			usr/lib/dan-glasses/audiod/
+Services/audiod/vad.py					usr/lib/dan-glasses/audiod/
+Services/audiod/publish.py				usr/lib/dan-glasses/audiod/
+Services/audiod/config.yaml				usr/lib/dan-glasses/audiod/
+
+Services/perceptiond/perceptiond.py			usr/lib/dan-glasses/perceptiond/
+Services/perceptiond/capture.py				usr/lib/dan-glasses/perceptiond/
+Services/perceptiond/events.py				usr/lib/dan-glasses/perceptiond/
+Services/perceptiond/salience.py				usr/lib/dan-glasses/perceptiond/
+Services/perceptiond/vlm.py				usr/lib/dan-glasses/perceptiond/
+Services/perceptiond/config.py				usr/lib/dan-glasses/perceptiond/
+Services/perceptiond/perceptiond.yaml			usr/lib/dan-glasses/perceptiond/
+
+Services/memoryd/memoryd.py				usr/lib/dan-glasses/memoryd/
+
+Services/toold/toold.py					usr/lib/dan-glasses/toold/
+Services/toold/tool_registry.json			usr/lib/dan-glasses/toold/
+
+Services/ttsd/ttsd.py					usr/lib/dan-glasses/ttsd/
+
+Services/os-toold/os_toold.py				usr/lib/dan-glasses/os-toold/
+Services/os-toold/config.yaml				usr/lib/dan-glasses/os-toold/
+
+packaging/systemd/audiod.service				lib/systemd/system/dan-glasses-audiod.service
+packaging/systemd/perceptiond.service			lib/systemd/system/dan-glasses-perceptiond.service
+packaging/systemd/memoryd.service			lib/systemd/system/dan-glasses-memoryd.service
+packaging/systemd/toold.service				lib/systemd/system/dan-glasses-toold.service
+packaging/systemd/ttsd.service				lib/systemd/system/dan-glasses-ttsd.service
+packaging/systemd/os-toold.service			lib/systemd/system/dan-glasses-os-toold.service

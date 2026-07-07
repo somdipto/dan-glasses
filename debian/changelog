@@ -1,0 +1,7 @@
+dan-glasses-daemons (0.1.0-1) unstable; urgency=medium
+
+  * Initial Debian package.
+  * Six systemd units: audiod, perceptiond, memoryd, toold, ttsd, os-toold.
+  * All daemons bind to loopback by default.
+
+ -- somdipto <somdiptonandy@gmail.com>  Mon, 16 Jun 2026 06:20:00 +0530
