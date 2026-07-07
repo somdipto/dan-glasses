@@ -5,10 +5,13 @@ import {
   isTauri,
   viewfinderUrl,
   snapshotUrl,
+  frameUrl,
+  frameOverlayUrl,
   type Mode,
   type PerceptionDescription,
   type PerceptionStatus,
 } from '../lib/tauriApi';
+import { SERVICE_URLS } from '../lib/services';
 
 interface VisionDashboardProps {
   baseUrl?: string;
@@ -37,7 +40,7 @@ function salienceRatio(s: PerceptionStatus): string {
   return `${((s.salient_frames / s.frames_processed) * 100).toFixed(0)}%`;
 }
 
-export default function VisionDashboard({ baseUrl = 'http://localhost:8092' }: VisionDashboardProps) {
+export default function VisionDashboard({ baseUrl = SERVICE_URLS.perceptiond }: VisionDashboardProps) {
   const backend = useMemo(() => createPerceptionBackend(baseUrl), [baseUrl]);
   const usingTauri = useMemo(() => isTauri(), []);
 
@@ -49,29 +52,43 @@ export default function VisionDashboard({ baseUrl = 'http://localhost:8092' }: V
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [newCount, setNewCount] = useState(0);
   const seenIdsRef = useRef<Set<number>>(new Set());
+  // v11.0: highest event_id we've already seen this session. Used to ask
+  // perceptiond for "everything new since I last looked" so reconnect /
+  // tab-switch / resync never duplicates or drops descriptions even when
+  // the in-memory ring (cap=200) has rolled over between polls.
+  const lastSeenEventIdRef = useRef<number>(0);
 
   useEffect(() => {
     let cancelled = false;
 
     async function tick() {
       try {
-        const [h, s, d] = await Promise.all([
-          backend.health(),
-          backend.status(),
-          backend.descriptions(DESC_COUNT),
-        ]);
+        const h = await backend.health();
         if (cancelled) return;
         setHealthOk(h);
+        const s = await backend.status();
+        if (cancelled) return;
         if (s) setStatus(s);
+        // v11.0: pass `since` so the server only returns descriptions
+        // newer than what we already have. On first mount lastSeenEventIdRef
+        // is 0, so we get the full DESC_COUNT window from the ring.
+        const sinceArg = lastSeenEventIdRef.current || undefined;
+        const d = await backend.descriptions({ count: DESC_COUNT, since: sinceArg });
+        if (cancelled) return;
         if (d && Array.isArray(d.descriptions)) {
           const descs = d.descriptions;
           let added = 0;
+          let maxId = lastSeenEventIdRef.current;
           for (const x of descs) {
             if (!seenIdsRef.current.has(x.event_id)) {
               seenIdsRef.current.add(x.event_id);
               added += 1;
             }
+            if (typeof x.event_id === 'number' && x.event_id > maxId) {
+              maxId = x.event_id;
+            }
           }
+          lastSeenEventIdRef.current = maxId;
           setDescriptions(descs);
           if (added > 0) setNewCount((n) => n + added);
         }
@@ -223,15 +240,31 @@ export default function VisionDashboard({ baseUrl = 'http://localhost:8092' }: V
           <div className="vision-empty">no descriptions yet — switch to Active mode to generate some</div>
         ) : (
           <ul className="vision-list">
-            {descriptions.map((d) => (
-              <li key={d.event_id} className="vision-item">
-                <div className="vision-item-meta">
-                  <span className="vision-item-time">{fmtTime(d.timestamp)}</span>
-                  <span className="vision-item-id">#{d.event_id} · {d.image_id.slice(0, 6)}</span>
-                </div>
-                <div className="vision-item-text">{d.description}</div>
-              </li>
-            ))}
+            {descriptions.map((d) => {
+              const thumb = (d.bboxes && d.bboxes.length > 0) ? frameOverlayUrl(baseUrl, d.image_id) : frameUrl(baseUrl, d.image_id);
+              return (
+                <li key={d.event_id} className="vision-item">
+                  <div className="vision-item-meta">
+                    <span className="vision-item-time">{fmtTime(d.timestamp)}</span>
+                    <span className="vision-item-id">#{d.event_id} · {d.image_id.slice(0, 6)}</span>
+                  </div>
+                  <div className="vision-item-body">
+                    {thumb && (
+                      <img
+                        className="vision-item-thumb"
+                        src={thumb}
+                        alt={`frame ${d.image_id}`}
+                        loading="lazy"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
+                    )}
+                    <div className="vision-item-text">{d.description}</div>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

@@ -11,6 +11,7 @@ import signal
 import argparse
 import threading
 import json
+import os
 from collections import deque
 from pathlib import Path
 from typing import Optional
@@ -115,9 +116,16 @@ class PerceptionPipeline:
 
         # Publisher
         pub_cfg = config.get("server", {})
+        # v8.0: memoryd sink is opt-in. Disabled if `memory_sink.enabled`
+        # is False or `url` is empty.
+        sink_cfg = config.get("memory_sink", {}) or {}
+        sink_enabled = bool(sink_cfg.get("enabled", True)) and bool(sink_cfg.get("url"))
         self.publisher = DescriptionPublisher(
             mode=pub_cfg.get("mode", "stdout"),
             socket_path=pub_cfg.get("socket_path", "/var/run/perceptiond.sock"),
+            memory_sink_url=sink_cfg.get("url") if sink_enabled else None,
+            memory_sink_timeout=float(sink_cfg.get("timeout", 2.0)),
+            memory_sink_queue_cap=int(sink_cfg.get("queue_cap", 256)),
         )
 
         # HTTP server (for health/status checks) - TCP on 8092 + Unix socket
@@ -129,7 +137,20 @@ class PerceptionPipeline:
         self.server.set_pipeline(self)
 
         # Per-event thumbnail ring (for /frames/<image_id>.jpg)
-        self.frame_store = FrameStore()
+        # v10.0: opt-in persistent frame store. When enabled, the
+        # FrameStore writes JPEGs to disk so memoryd's image_id refs
+        # stay resolvable across the in-memory ring being overrun.
+        img_cfg = config.get("image_store", {}) or {}
+        if img_cfg.get("enabled", True):
+            raw_dir = img_cfg.get("dir") or "~/.cache/dan-glasses/perceptiond/frames"
+            image_dir = os.path.expanduser(raw_dir)
+        else:
+            image_dir = None
+        self.frame_store = FrameStore(
+            capacity=int(img_cfg.get("capacity", 50)),
+            image_dir=image_dir,
+            max_bytes=int(img_cfg.get("max_bytes", 200 * 1024 * 1024)),
+        )
         self.server.set_frame_store(self.frame_store)
 
         # Capture
@@ -200,6 +221,11 @@ class PerceptionPipeline:
         the current frame is too similar to the last triggered frame, we
         skip the expensive VLM call entirely. The skip is counted but the
         frame is still considered processed.
+
+        v9.0: captures the per-frame bboxes from the salience result and
+        forwards them to _run_vlm so the description event includes the
+        rectangle(s) the VLM actually saw. /frames/<id>.jpg paints them
+        back on top of the thumbnail via /frames/<id>.jpg?overlay=1.
         """
         with self._lock:
             if self._mode == "idle":
@@ -235,8 +261,9 @@ class PerceptionPipeline:
         with self._lock:
             self._deduped_count += 1
 
-        # Run VLM
-        self._run_vlm(frame)
+        # Run VLM (carry bboxes through so the event and the thumbnail
+        # are consistent with what the VLM was asked to describe).
+        self._run_vlm(frame, result.bboxes)
 
     def _encode_thumb(self, frame) -> "Optional[bytes]":
         """Encode a small JPEG thumbnail for the frame (used for /frames/<id>.jpg)."""
@@ -261,8 +288,16 @@ class PerceptionPipeline:
             print(f"perceptiond: thumb encode error: {e}", flush=True)
             return None
 
-    def _run_vlm(self, frame):
-        """Run VLM on a frame in a background thread."""
+    def _run_vlm(self, frame, bboxes: Optional[list] = None):
+        """Run VLM on a frame in a background thread.
+
+        v9.0: `bboxes` is the salience result's rectangle list. We pass it
+        to DescriptionPublisher so the description event carries the same
+        coordinates the /frames/<id>.jpg overlay paints. Defaults to
+        None / empty for tests that don't supply a SalienceResult.
+        """
+        bboxes = bboxes or []
+
         def _do():
             with self._lock:
                 self._vlm_busy = True
@@ -271,7 +306,13 @@ class PerceptionPipeline:
             image_id = str(uuid.uuid4())[:8]
             thumb = self._encode_thumb(frame)
             if thumb:
-                self.frame_store.put(image_id, thumb)
+                # v9.0: stash the bboxes next to the JPEG so the
+                # /frames/<id>.jpg handler can paint them on demand
+                # without needing a second lookup.
+                if bboxes:
+                    self.frame_store.put_with_bboxes(image_id, thumb, bboxes)
+                else:
+                    self.frame_store.put(image_id, thumb)
 
             try:
                 # v7.0: count the VLM invocation before the actual call so
@@ -289,6 +330,7 @@ class PerceptionPipeline:
                         "description": desc,
                         "trigger_kind": self._last_trigger_kind,
                         "motion_score": round(self._last_motion_score, 4),
+                        "bboxes": bboxes,
                     })
             except Exception as e:
                 print(f"perceptiond: VLM error: {e}", flush=True)
@@ -342,11 +384,26 @@ class PerceptionPipeline:
                 "last_trigger_kind": self._last_trigger_kind,
                 "deduped_count": self._deduped_count,
                 "dedup_skip_count": self._dedup_skip_count,
+                # v11.0: monotonic publish counter + ring-buffer cursor
+                # so dashboards can detect missed events and resume
+                # cleanly via /descriptions?since=<id>.
+                "total_published": self.publisher.total_published() if self.publisher else 0,
+                "ring_oldest_event_id": self.publisher.ring_oldest_event_id() if self.publisher else 0,
             }
         try:
             base["sse_subscribers"] = self.publisher.event_bus.subscriber_count()
         except Exception:
             base["sse_subscribers"] = 0
+        # v8.0 — memoryd sink counters
+        try:
+            base["memory_sink"] = self.publisher.memory_sink.stats()
+        except Exception:
+            pass
+        # v10.0 — persistent image-store counters
+        try:
+            base["image_store"] = self.frame_store.stats()
+        except Exception:
+            pass
         return base
 
     def get_detailed_status(self) -> dict:
@@ -371,6 +428,9 @@ class PerceptionPipeline:
                 "deduped_count": self._deduped_count,
                 "dedup_skip_count": self._dedup_skip_count,
                 "scene_gate": self.scene_gate.stats(),
+                # v11.0: monotonic publish counter + ring-buffer cursor
+                "total_published": self.publisher.total_published() if self.publisher else 0,
+                "ring_oldest_event_id": self.publisher.ring_oldest_event_id() if self.publisher else 0,
             }
         # Subscriber count is read without holding self._lock to avoid
         # contending with the publisher hot path; EventBus has its own
@@ -379,6 +439,11 @@ class PerceptionPipeline:
             base["sse_subscribers"] = self.publisher.event_bus.subscriber_count()
         except Exception:
             base["sse_subscribers"] = 0
+        # v10.0 — persistent image-store counters
+        try:
+            base["image_store"] = self.frame_store.stats()
+        except Exception:
+            pass
         return base
 
     def start(self):

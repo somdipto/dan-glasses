@@ -41,6 +41,15 @@ pub struct AudiodCommandResponse {
     pub message: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SalienceBBox {
+    pub x: i64,
+    pub y: i64,
+    pub w: i64,
+    pub h: i64,
+    pub kind: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PerceptionStatus {
     pub mode: String,
@@ -50,6 +59,21 @@ pub struct PerceptionStatus {
     pub descriptions: u64,
     pub vlm_busy: bool,
     pub vlm_queue_depth: u64,
+    #[serde(default)]
+    pub memory_sink: Option<PerceptionMemorySink>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PerceptionMemorySink {
+    pub enabled: bool,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub queued: u64,
+    pub queue_cap: u64,
+    pub sent: u64,
+    pub dropped: u64,
+    pub errors: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -60,12 +84,31 @@ pub struct PerceptionDescription {
     pub timestamp: String,
     pub description: String,
     pub event_id: u64,
+    #[serde(default)]
+    pub trigger_kind: Option<String>,
+    #[serde(default)]
+    pub motion_score: Option<f64>,
+    #[serde(default)]
+    pub bboxes: Vec<SalienceBBox>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PerceptionCursor {
+    pub ring_oldest_event_id: u64,
+    pub total_published: u64,
+    pub ring_size: u64,
+    pub ring_cap: u64,
+    #[serde(default)]
+    pub requested_since: Option<u64>,
+    pub overflowed: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PerceptionDescriptionsResponse {
     pub count: u64,
     pub descriptions: Vec<PerceptionDescription>,
+    #[serde(default)]
+    pub cursor: Option<PerceptionCursor>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -243,16 +286,44 @@ async fn perception_set_mode(mode: String) -> Result<PerceptionModeResponse, Str
 }
 
 #[tauri::command]
-async fn perception_descriptions(count: Option<u64>) -> Result<PerceptionDescriptionsResponse, String> {
+async fn perception_descriptions(
+    count: Option<u64>,
+    since: Option<u64>,
+) -> Result<PerceptionDescriptionsResponse, String> {
     let n = count.unwrap_or(20).min(200);
     let client = perceptiond_client().map_err(|e| format!("client: {e}"))?;
+    let mut q: Vec<(&str, String)> = vec![("count", n.to_string())];
+    if let Some(s) = since {
+        q.push(("since", s.to_string()));
+    }
     let resp = client
         .get(format!("{PERCEPTIOND_URL}/descriptions"))
-        .query(&[("count", n.to_string())])
+        .query(&q)
         .send()
         .await
         .map_err(|e| format!("request: {e}"))?;
     resp.json::<PerceptionDescriptionsResponse>().await.map_err(|e| format!("parse: {e}"))
+}
+
+async fn perception_cursor() -> Result<Option<PerceptionCursor>, String> {
+    let client = perceptiond_client().map_err(|e| format!("client: {e}"))?;
+    let resp = client
+        .get(format!("{PERCEPTIOND_URL}/status"))
+        .send()
+        .await
+        .map_err(|e| format!("request: {e}"))?;
+    let st: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {e}"))?;
+    let total = st.get("total_published").and_then(|v| v.as_u64()).unwrap_or(0);
+    let oldest = st.get("ring_oldest_event_id").and_then(|v| v.as_u64()).unwrap_or(0);
+    let size = st.get("descriptions").and_then(|v| v.as_u64()).unwrap_or(0);
+    Ok(Some(PerceptionCursor {
+        ring_oldest_event_id: oldest,
+        total_published: total,
+        ring_size: size,
+        ring_cap: 200,
+        requested_since: None,
+        overflowed: false,
+    }))
 }
 
 // Frame JPEG — used by the React dashboard and the standalone demo page.
@@ -268,6 +339,63 @@ async fn perception_frame_jpeg() -> Result<Vec<u8>, String> {
         return Err(format!("frame.jpg → {}", resp.status()));
     }
     resp.bytes().await.map(|b| b.to_vec()).map_err(|e| format!("bytes: {e}"))
+}
+
+// Per-event thumbnail — serves the JPEG the VLM actually saw for a given
+// description. Returns a 404 result string (not an error) when the frame
+// has aged out of the ring buffer, so the UI can degrade gracefully.
+#[tauri::command]
+async fn perception_frame_for_id(image_id: String) -> Result<Vec<u8>, String> {
+    if image_id.is_empty()
+        || image_id.len() > 32
+        || !image_id.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        return Err(format!("invalid image_id: {image_id}"));
+    }
+    let client = perceptiond_client().map_err(|e| format!("client: {e}"))?;
+    let resp = client
+        .get(format!("{PERCEPTIOND_URL}/frames/{image_id}.jpg"))
+        .send()
+        .await
+        .map_err(|e| format!("request: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("frames/{image_id}.jpg → {}", resp.status()));
+    }
+    resp.bytes().await.map(|b| b.to_vec()).map_err(|e| format!("bytes: {e}"))
+}
+
+/// Return the public URL for a per-event thumbnail. The webview's <img src>
+/// loads this directly from the perceptiond daemon so we don't pay the cost
+/// of streaming bytes through Rust. `raw=true` returns the un-annotated
+/// JPEG; default paints salience rectangles (face=motion=color-coded).
+#[tauri::command]
+fn perception_frame_url(image_id: String, raw: Option<bool>, base_url: Option<String>) -> String {
+    let base = base_url.unwrap_or_else(|| "http://127.0.0.1:8092".to_string());
+    let mut url = format!("{}/frames/{}.jpg", base, image_id);
+    if raw.unwrap_or(false) {
+        url.push_str("?raw=1");
+    }
+    url
+}
+
+async fn perception_memory_stats() -> Result<Option<PerceptionMemorySink>, String> {
+    let client = perceptiond_client().map_err(|e| format!("client: {e}"))?;
+    let resp = client
+        .get(format!("{PERCEPTIOND_URL}/status"))
+        .send()
+        .await
+        .map_err(|e| format!("request: {e}"))?;
+    let status: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("parse: {e}"))?;
+    let ms = status.get("memory_sink").cloned();
+    if ms.is_none() {
+        return Ok(None);
+    }
+    serde_json::from_value::<PerceptionMemorySink>(ms.unwrap())
+        .map(Some)
+        .map_err(|e| format!("decode: {e}"))
 }
 
 // Viewfinder URL — the frontend uses this to build the <img src=...> for the
@@ -297,8 +425,12 @@ pub fn run() {
             perception_status,
             perception_set_mode,
             perception_descriptions,
+            perception_cursor,
             perception_frame_jpeg,
+            perception_frame_for_id,
             perception_stream_url,
+            perception_memory_stats,
+            perception_frame_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Dan Glasses application");

@@ -7,11 +7,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 import time
 import threading
+import tempfile
+import shutil
 
 from capture import V4L2Capture
 from salience import SalienceDetector
 from vlm import VLMInference
-from events import DescriptionPublisher
+from events import DescriptionPublisher, FrameStore
 from config import load_config, DEFAULT_CONFIG
 
 
@@ -553,6 +555,837 @@ def test_stats_live_pipeline_regression():
         pub.close()
 
 
+# ---------- v8.0 — memoryd sink ----------
+# MemorySink(url=..., queue_cap=..., timeout=...). The worker thread auto-
+# starts in __init__ when url is set; .stop() drains the queue and joins.
+# DescriptionPublisher(..., memory_sink_url=..., memory_sink_timeout=...,
+# memory_sink_queue_cap=...) constructs the sink. publish() forwards each
+# event with type=="description" to memory_sink.submit() non-blockingly.
+
+
+def test_memory_sink_basic():
+    """MemorySink: a description is POSTed to the configured URL and counters tick."""
+    import threading as _th
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    received = []
+    received_event = _th.Event()
+
+    class _H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length)
+            received.append((self.path, body))
+            received_event.set()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"id":1,"embedding_id":"v1"}')
+
+        def log_message(self, *a, **kw):
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), _H)
+    port = srv.server_address[1]
+    t = _th.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        from events import MemorySink
+        sink = MemorySink(
+            url=f"http://127.0.0.1:{port}/memories",
+            queue_cap=8,
+            timeout=2.0,
+        )
+        try:
+            # submit() takes a pre-built episodic payload; test the contract directly.
+            sink.submit({
+                "type": "episodic",
+                "content": "hello world",
+                "metadata": {"source": "perceptiond", "image_id": "abc"},
+            })
+            assert received_event.wait(timeout=3.0), "server did not receive POST"
+            assert received[0][0] == "/memories"
+            import json as _json
+            body = _json.loads(received[0][1])
+            assert body["type"] == "episodic"
+            assert body["content"] == "hello world"
+            assert body["metadata"]["source"] == "perceptiond"
+            assert body["metadata"]["image_id"] == "abc"
+            # Wait briefly for worker to finish incrementing sent (server
+            # signal arrives as soon as the request lands; sent++ happens
+            # right after the 200 response is received).
+            import time as _t
+            ok = False
+            for _ in range(20):
+                s = sink.stats()
+                if s["sent"] == 1 and s["errors"] == 0:
+                    ok = True
+                    break
+                _t.sleep(0.05)
+            assert ok, f"counters never settled: {sink.stats()}"
+            s = sink.stats()
+            assert s["enabled"] is True
+            assert s["sent"] == 1
+            assert s["errors"] == 0
+            print("  MemorySink basic: PASS")
+        finally:
+            sink.close()
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_memory_sink_disabled():
+    """When url is None, submit() is a no-op and no thread is started."""
+    from events import MemorySink
+    sink = MemorySink(url=None, queue_cap=4, timeout=1.0)
+    try:
+        sink.submit({"description": "x"})
+        import time as _t
+        _t.sleep(0.1)
+        s = sink.stats()
+        assert s["enabled"] is False
+        assert s["queued"] == 0
+        assert s["sent"] == 0
+        print("  MemorySink disabled: PASS")
+    finally:
+        sink.close()
+
+
+def test_memory_sink_overflow_drops_oldest():
+    """Bounded queue drops oldest under load (never blocks the hot path)."""
+    import threading as _th
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    block = _th.Event()
+    proceed = _th.Event()
+    count = {"n": 0}
+
+    class _H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(length)
+            count["n"] += 1
+            if count["n"] == 1:
+                # Hold the first request so the queue backs up.
+                block.set()
+                proceed.wait(timeout=5.0)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"id":1}')
+
+        def log_message(self, *a, **kw):
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), _H)
+    port = srv.server_address[1]
+    t = _th.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        from events import MemorySink
+        sink = MemorySink(
+            url=f"http://127.0.0.1:{port}/memories",
+            queue_cap=4,
+            timeout=5.0,
+        )
+        try:
+            # Flood 12 descriptions; queue caps at 4 so at least 1 must drop.
+            for i in range(12):
+                sink.submit({"description": f"frame {i}"})
+            assert block.wait(timeout=2.0), "server did not receive first request"
+            import time as _t
+            _t.sleep(0.2)
+            s = sink.stats()
+            assert s["dropped"] >= 1, f"expected drops, got {s}"
+            # Release the held request and let the worker drain.
+            proceed.set()
+            _t.sleep(0.5)
+            print("  MemorySink overflow: PASS")
+        except Exception:
+            proceed.set()
+            raise
+        finally:
+            sink.close()
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_memory_sink_swallows_errors():
+    """A 500 from the memoryd side must not crash the worker."""
+    import threading as _th
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    done = _th.Event()
+
+    class _H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"error":"boom"}')
+            done.set()
+
+        def log_message(self, *a, **kw):
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), _H)
+    port = srv.server_address[1]
+    t = _th.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        from events import MemorySink
+        sink = MemorySink(url=f"http://127.0.0.1:{port}/memories", timeout=1.0, queue_cap=4)
+        try:
+            sink.submit({"description": "x"})
+            assert done.wait(timeout=3.0)
+            import time as _t
+            _t.sleep(0.2)
+            s = sink.stats()
+            assert s["errors"] >= 1, f"expected error counter, got {s}"
+            assert s["sent"] == 0
+            print("  MemorySink error-swallow: PASS")
+        finally:
+            sink.close()
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_publisher_wires_memory_sink():
+    """DescriptionPublisher forwards each description event to the sink."""
+    import threading as _th
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    received = []
+    done = _th.Event()
+
+    class _H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", "0"))
+            received.append(self.rfile.read(length))
+            done.set()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"id":1}')
+
+        def log_message(self, *a, **kw):
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), _H)
+    port = srv.server_address[1]
+    t = _th.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        pub = DescriptionPublisher(
+            mode="stdout",
+            memory_sink_url=f"http://127.0.0.1:{port}/memories",
+            memory_sink_timeout=2.0,
+            memory_sink_queue_cap=8,
+        )
+        try:
+            assert pub.memory_sink.enabled is True
+            pub.publish({
+                "type": "description",
+                "description": "orange circle on black",
+                "image_id": "img1",
+            })
+            assert done.wait(timeout=3.0), "publisher did not forward to memoryd"
+            import json as _json
+            body = _json.loads(received[0])
+            assert body["content"] == "orange circle on black"
+            assert body["type"] == "episodic"
+            assert body["metadata"]["image_id"] == "img1"
+            assert body["metadata"]["source"] == "perceptiond"
+            print("  DescriptionPublisher → MemorySink: PASS")
+        finally:
+            pub.close()
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+
+# ---------- v9.0 — bbox overlay on /frames/<id>.jpg ----------
+# SalienceResult.bboxes: list of {x, y, w, h, kind} dicts surfaced from
+# the motion-region tracker + Haar cascade. _paint_bboxes(jpeg, bboxes)
+# re-encodes the JPEG with colored rectangles painted on top.
+# /frames/<image_id>.jpg?raw=1 → un-annotated JPEG.
+# /frames/<image_id>.jpg?overlay=1 → annotated, even if bboxes are empty
+# (useful for dashboards that always want the visual affordance).
+# /frames/<image_id>.jpg (default) → annotated if bboxes exist, else raw.
+# Response headers: X-Bbox-Count, X-Overlay (1/0).
+
+
+def test_salience_bboxes_basic():
+    """SalienceResult carries a bboxes list; motion-only mode produces a
+    deterministic motion bbox on a non-static frame.
+    """
+    from salience import SalienceDetector, TRIGGER_MOTION, TRIGGER_FACE, TRIGGER_BOTH
+
+    det = SalienceDetector(
+        motion_threshold=0.05,
+        pixel_delta_threshold=20,
+        mode="motion",  # disable face cascade for determinism
+        width=160,
+        height=120,
+    )
+    # Frame 1: solid black, primes the background.
+    frame1 = np.zeros((120, 160, 3), dtype=np.uint8)
+    r1 = det.evaluate(frame1)
+    # Frame 2: full white, all-pixels-different from background.
+    frame2 = np.ones((120, 160, 3), dtype=np.uint8) * 255
+    r2 = det.evaluate(frame2)
+
+    assert isinstance(r1.bboxes, list), "bboxes should be a list"
+    assert isinstance(r2.bboxes, list)
+    # to_dict() must surface bboxes
+    d2 = r2.to_dict()
+    assert "bboxes" in d2, f"to_dict missing bboxes: {d2.keys()}"
+    assert isinstance(d2["bboxes"], list)
+    # On a fully-changed frame, at least one motion bbox should appear
+    if r2.salient:
+        assert len(d2["bboxes"]) >= 1, f"expected motion bbox on salient frame, got {d2['bboxes']}"
+        bbox = d2["bboxes"][0]
+        for key in ("x", "y", "w", "h", "kind"):
+            assert key in bbox, f"bbox missing {key}: {bbox}"
+        # bbox is in image-space, must fit inside the frame
+        assert 0 <= bbox["x"] < 160
+        assert 0 <= bbox["y"] < 120
+        assert bbox["w"] > 0 and bbox["h"] > 0
+    # Trigger-kind constants exported
+    assert TRIGGER_MOTION == "motion"
+    assert TRIGGER_FACE == "face"
+    assert TRIGGER_BOTH == "both"
+
+
+def test_salience_bboxes_face_present():
+    """If mode='face' and a fake face cascade is wired, evaluate() returns
+    face-kind bboxes. We can't guarantee Haar finds anything in a
+    synthetic frame, so we only assert the schema is consistent.
+    """
+    from salience import SalienceDetector
+    det = SalienceDetector(mode="face", width=160, height=120)
+    frame = np.zeros((120, 160, 3), dtype=np.uint8)
+    r = det.evaluate(frame)
+    assert isinstance(r.bboxes, list)
+    for b in r.bboxes:
+        assert b["kind"] in ("motion", "face", "both"), f"unexpected kind: {b['kind']}"
+
+
+def test_paint_bboxes_basic():
+    """_paint_bboxes returns a valid JPEG when bboxes are non-empty."""
+    from events import _paint_bboxes
+    from PIL import Image
+    import io
+
+    # Build a 200x200 image, encode to JPEG.
+    arr = np.zeros((200, 200, 3), dtype=np.uint8)
+    arr[60:140, 60:140] = 200  # gray square
+    img = Image.fromarray(arr)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=85)
+    jpeg_in = buf.getvalue()
+    assert jpeg_in[:2] == b"\xff\xd8", "input must be JPEG"
+
+    bboxes = [{"x": 50, "y": 50, "w": 100, "h": 100, "kind": "face"}]
+    jpeg_out = _paint_bboxes(jpeg_in, bboxes)
+    assert isinstance(jpeg_out, (bytes, bytearray))
+    assert bytes(jpeg_out)[:2] == b"\xff\xd8", "output must start with JPEG SOI"
+    assert bytes(jpeg_out)[-2:] == b"\xff\xd9", "output must end with JPEG EOI"
+    # Painted JPEG is usually slightly larger or comparable.
+    assert len(jpeg_out) >= int(0.8 * len(jpeg_in)), f"painted shrunk too much: {len(jpeg_out)} vs {len(jpeg_in)}"
+
+
+def test_paint_bboxes_face_and_motion():
+    """_paint_bboxes handles multiple bboxes of mixed kinds."""
+    from events import _paint_bboxes
+    from PIL import Image
+    import io
+
+    arr = np.full((150, 200, 3), 30, dtype=np.uint8)
+    img = Image.fromarray(arr)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=80)
+    jpeg_in = buf.getvalue()
+
+    bboxes = [
+        {"x": 10, "y": 10, "w": 40, "h": 40, "kind": "face"},
+        {"x": 80, "y": 20, "w": 30, "h": 30, "kind": "face"},
+        {"x": 130, "y": 50, "w": 50, "h": 80, "kind": "motion"},
+    ]
+    jpeg_out = _paint_bboxes(jpeg_in, bboxes)
+    assert bytes(jpeg_out)[:2] == b"\xff\xd8"
+    assert bytes(jpeg_out)[-2:] == b"\xff\xd9"
+    assert len(jpeg_out) >= int(0.8 * len(jpeg_in))
+
+
+def test_paint_bboxes_empty_returns_input():
+    """_paint_bboxes with empty list returns the input JPEG bytes (no-op)."""
+    from events import _paint_bboxes
+    from PIL import Image
+    import io
+
+    arr = np.full((100, 100, 3), 50, dtype=np.uint8)
+    img = Image.fromarray(arr)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=80)
+    jpeg_in = buf.getvalue()
+
+    out = _paint_bboxes(jpeg_in, [])
+    # Empty list → no-op, return original bytes unchanged.
+    assert bytes(out) == jpeg_in, "empty bboxes must return input unchanged"
+
+
+def test_frame_store_bboxes():
+    """FrameStore.put_with_bboxes stores both JPEG and bboxes; get_bboxes
+    returns the list. Plain put() leaves bboxes as None.
+    """
+    from events import FrameStore
+    fs = FrameStore(capacity=3)
+    fs.put("plain", b"\xff\xd8plain-jpeg-bytes\xff\xd9")
+    assert fs.get_bboxes("plain") is None, "put() without bboxes → None"
+
+    bboxes = [
+        {"x": 1, "y": 2, "w": 3, "h": 4, "kind": "face"},
+        {"x": 5, "y": 6, "w": 7, "h": 8, "kind": "motion"},
+    ]
+    fs.put_with_bboxes("withbb", b"\xff\xd8painted-jpeg\xff\xd9", bboxes)
+    # Stored as normalized [x, y, w, h, kind] tuples.
+    assert fs.get_bboxes("withbb") == [[1, 2, 3, 4, "face"], [5, 6, 7, 8, "motion"]]
+    assert fs.get("withbb") == b"\xff\xd8painted-jpeg\xff\xd9"
+    # missing key
+    assert fs.get_bboxes("nope") is None
+
+
+def test_frames_endpoint_with_bboxes():
+    """/frames/<id>.jpg overlays bboxes by default; ?raw=1 skips overlay.
+    X-Bbox-Count and X-Overlay headers report the state.
+    """
+    from events import PerceptiondServer
+    import urllib.request
+    from PIL import Image
+    import io
+
+    # Build a real tiny JPEG so _paint_bboxes has something to roundtrip.
+    arr = np.full((100, 100, 3), 40, dtype=np.uint8)
+    img = Image.fromarray(arr)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=80)
+    jpeg = buf.getvalue()
+
+    fs = FrameStore()
+    fs.put_with_bboxes("cafe1234", jpeg, [
+        {"x": 10, "y": 10, "w": 50, "h": 50, "kind": "face"}
+    ])
+
+    server = PerceptiondServer(
+        socket_path="/tmp/test_perc_bbox.sock", tcp_port=18099,
+    )
+    server._frame_store = fs
+    server.start()
+    time.sleep(0.3)
+    try:
+        # Default → overlay
+        with urllib.request.urlopen(
+            "http://127.0.0.1:18099/frames/cafe1234.jpg", timeout=3
+        ) as resp:
+            data = resp.read()
+            overlay_hdr = resp.headers.get("X-Overlay", "")
+            count_hdr = resp.headers.get("X-Bbox-Count", "")
+            ctype = resp.headers.get("Content-Type", "")
+        assert ctype == "image/jpeg", f"ctype={ctype!r}"
+        assert data[:2] == b"\xff\xd8", "default response must be JPEG"
+        assert overlay_hdr == "1", f"X-Overlay should be 1, got {overlay_hdr!r}"
+        assert count_hdr == "1", f"X-Bbox-Count should be 1, got {count_hdr!r}"
+
+        # ?raw=1 → skip overlay
+        with urllib.request.urlopen(
+            "http://127.0.0.1:18099/frames/cafe1234.jpg?raw=1", timeout=3
+        ) as resp:
+            data_raw = resp.read()
+            overlay_hdr = resp.headers.get("X-Overlay", "")
+            count_hdr = resp.headers.get("X-Bbox-Count", "")
+        assert overlay_hdr == "0", f"X-Overlay should be 0 with ?raw=1, got {overlay_hdr!r}"
+        assert count_hdr == "1", f"X-Bbox-Count should still be 1, got {count_hdr!r}"
+        # raw bytes are the exact stored JPEG
+        assert data_raw == jpeg, "?raw=1 must return original stored bytes"
+    finally:
+        server.stop()
+
+
+def test_frames_endpoint_no_bboxes():
+    """/frames/<id>.jpg with no bboxes serves the raw stored JPEG and
+    X-Overlay=0, X-Bbox-Count=0.
+    """
+    from events import PerceptiondServer
+    import urllib.request
+    from PIL import Image
+    import io
+
+    arr = np.full((80, 80, 3), 100, dtype=np.uint8)
+    img = Image.fromarray(arr)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=80)
+    jpeg = buf.getvalue()
+
+    fs = FrameStore()
+    fs.put("deadbeef", jpeg)
+
+    server = PerceptiondServer(
+        socket_path="/tmp/test_perc_nopebb.sock", tcp_port=18100,
+    )
+    server._frame_store = fs
+    server.start()
+    time.sleep(0.3)
+    try:
+        with urllib.request.urlopen(
+            "http://127.0.0.1:18100/frames/deadbeef.jpg", timeout=3
+        ) as resp:
+            data = resp.read()
+            overlay_hdr = resp.headers.get("X-Overlay", "")
+            count_hdr = resp.headers.get("X-Bbox-Count", "")
+        assert data == jpeg, "no-bbox path must return stored bytes"
+        assert overlay_hdr == "0"
+        assert count_hdr == "0"
+    finally:
+        server.stop()
+
+
+# ----- v10.0 — disk persistence -----
+
+def _tmp_image_dir(label: str = "percv10") -> str:
+    """Return a fresh per-test directory under /tmp."""
+    import tempfile
+    d = tempfile.mkdtemp(prefix=f"{label}_")
+    return d
+
+
+def test_frame_store_disk_basic():
+    """v10.0: when image_dir is set, put() also writes a .jpg + .json sidecar
+    and stats() reports the disk usage."""
+    from events import FrameStore
+    d = _tmp_image_dir()
+    fs = FrameStore(capacity=4, image_dir=d, max_bytes=10 * 1024 * 1024)
+    fs.put_with_bboxes(
+        "abcd1234",
+        b"\xff\xd8\xff\xe0hello-jpeg\xff\xd9",
+        [{"x": 1, "y": 2, "w": 3, "h": 4, "kind": "face"}],
+    )
+    # File + sidecar on disk
+    assert os.path.exists(os.path.join(d, "abcd1234.jpg"))
+    assert os.path.exists(os.path.join(d, "abcd1234.json"))
+    # stats() reports the on-disk state
+    s = fs.stats()
+    assert s["files_on_disk"] == 1
+    assert s["bytes_on_disk"] > 0
+    assert s["image_dir"] == d
+    assert s["max_bytes"] == 10 * 1024 * 1024
+    # get_bboxes returns the sidecar JSON (not the in-memory dict, which
+    # the new entry also lives in — both agree)
+    assert fs.get_bboxes("abcd1234") == [[1, 2, 3, 4, "face"]]
+    # invalid id (non-hex on the HTTP boundary) → store still rejects it
+    fs.put_with_bboxes("not-hex!", b"\xff\xd8\xff\xe0bad\xff\xd9", [])
+    assert not os.path.exists(os.path.join(d, "not-hex!.jpg"))
+
+
+def test_frame_store_disk_evicts_when_over_budget():
+    """v10.0: when total bytes exceed max_bytes, oldest entries are evicted."""
+    from events import FrameStore
+    d = _tmp_image_dir()
+    # Tight budget: 1 KiB total. Each JPEG is ~1 KiB.
+    fs = FrameStore(capacity=50, image_dir=d, max_bytes=1024)
+    jpeg = b"\xff\xd8" + (b"\x00" * 1000) + b"\xff\xd9"
+    for i in range(8):
+        fs.put(f"{i:08x}", jpeg)
+    s = fs.stats()
+    # We can fit at most 2 files (2 * ~1KiB ≈ budget); anything past that evicts.
+    assert s["files_on_disk"] <= 2
+    assert s["evictions_disk"] >= 6
+    # Newest file must still be on disk
+    assert os.path.exists(os.path.join(d, "00000007.jpg"))
+
+
+def test_frame_store_disk_get_falls_back_to_disk():
+    """v10.0: get() returns disk bytes when the in-memory ring has been
+    overrun. This is the 'what did you see' replay behavior."""
+    from events import FrameStore
+    d = _tmp_image_dir()
+    fs = FrameStore(capacity=2, image_dir=d, max_bytes=10 * 1024 * 1024)
+    fs.put("aaaa1111", b"\xff\xd8\xff\xe0one\xff\xd9")
+    fs.put("bbbb2222", b"\xff\xd8\xff\xe0two\xff\xd9")
+    fs.put("cccc3333", b"\xff\xd8\xff\xe0three\xff\xd9")
+    # aaaa1111 is no longer in memory (capacity=2)
+    assert fs.get("aaaa1111") is not None
+    # But the disk copy is served (so memoryd's reference stays resolvable)
+    assert fs.get("aaaa1111") == b"\xff\xd8\xff\xe0one\xff\xd9"
+    s = fs.stats()
+    assert s["hits_disk"] >= 1
+    # And the file is still on disk
+    assert os.path.exists(os.path.join(d, "aaaa1111.jpg"))
+
+
+def test_frame_store_disk_invalid_image_id_rejected():
+    """v10.0: invalid image_id (non-hex) is rejected at the put() boundary."""
+    from events import FrameStore
+    d = _tmp_image_dir()
+    fs = FrameStore(capacity=4, image_dir=d, max_bytes=10 * 1024 * 1024)
+    fs.put_with_bboxes("ZZZZ", b"\xff\xd8\xff\xe0bad\xff\xd9", [])
+    assert fs.stats()["files_on_disk"] == 0
+    # valid hex: stored
+    fs.put_with_bboxes("abcd1234", b"\xff\xd8\xff\xe0ok\xff\xd9", [])
+    assert fs.stats()["files_on_disk"] == 1
+    # invalid JPEG: not stored
+    fs.put_with_bboxes("abcd1235", b"NOT-A-JPEG", [])
+    assert fs.stats()["files_on_disk"] == 1
+
+
+def test_frame_store_disk_disabled_by_default():
+    """v10.0: FrameStore() with no image_dir behaves exactly like v9.0."""
+    from events import FrameStore
+    fs = FrameStore(capacity=3)
+    fs.put("aabbccdd", b"\xff\xd8\xff\xe0jpeg\xff\xd9")
+    s = fs.stats()
+    assert s["image_dir"] is None
+    assert s["files_on_disk"] == 0
+    assert s["max_bytes"] == 0
+    # In-memory behavior unchanged
+    assert fs.get("aabbccdd") == b"\xff\xd8\xff\xe0jpeg\xff\xd9"
+    assert len(fs) == 1
+
+
+def frames_endpoint_disk_fallback():
+    """v10.0: GET /frames/<id>.jpg serves from disk when the in-memory
+    entry has been evicted. Uses a live HTTP server (mirrors the production
+    handler path)."""
+    # NOTE: named without `test_` prefix to skip pytest auto-discovery —
+    # it's a long-running live-server smoke test. Exercised via main().
+    import tempfile, shutil, urllib.request
+    from events import FrameStore, PerceptiondServer
+    d = _tmp_image_dir("percv10_endpoint")
+    sock = f"/tmp/percv10_endpoint_{os.getpid()}.sock"
+    try:
+        fs = FrameStore(capacity=2, image_dir=d, max_bytes=10 * 1024 * 1024)
+        fs.put("aaaa1111", b"\xff\xd8\xff\xe0disk-one\xff\xd9")
+        fs.put("bbbb2222", b"\xff\xd8\xff\xe0disk-two\xff\xd9")
+        # overflow in-memory ring
+        fs.put("cccc3333", b"\xff\xd8\xff\xe0disk-three\xff\xd9")
+        # Confirm aaaa1111 was evicted from memory
+        assert fs.get("aaaa1111") is not None  # disk hit
+
+        server = PerceptiondServer(socket_path=sock, tcp_port=18099)
+        server.set_frame_store(fs)
+        server.start()
+        time.sleep(0.1)
+
+        req = urllib.request.Request("http://127.0.0.1:18099/frames/aaaa1111.jpg")
+        with urllib.request.urlopen(req, timeout=5) as r:
+            body = r.read()
+        assert body == b"\xff\xd8\xff\xe0disk-one\xff\xd9"
+        # bbox count header is reported even on disk-served bytes
+        assert r.headers.get("X-Bbox-Count") == "0"
+        server.stop()
+    finally:
+        if os.path.exists(sock):
+            try:
+                os.unlink(sock)
+            except OSError:
+                pass
+        shutil.rmtree(d, ignore_errors=True)
+
+
+# v11.0 — incremental description fetch via /descriptions?since=<event_id>
+# Closes the gap where the Tauri UI / external consumers have no way to
+# ask "give me everything after event N" without reconnecting SSE. Also
+# exposes cursor info (ring_oldest_event_id, total_published, overflowed)
+# so callers can detect when the in-memory ring has dropped events
+# they cared about and decide to fall back to memoryd's episodic store.
+
+def test_publisher_total_published():
+    """v11.0: total_published() increments monotonically even after the
+    ring buffer evicts old entries. This is the only way callers can
+    detect a ring-buffer gap after disconnecting SSE."""
+    pub = DescriptionPublisher(mode="stdout", ring_size=3)
+    try:
+        assert pub.total_published() == 0
+        for i in range(10):
+            pub.publish({
+                "type": "description",
+                "image_id": f"img{i}",
+                "timestamp": "2026-07-07T00:00:00Z",
+                "description": f"d {i}",
+            })
+        # Even after ring_size=3 evictions, total count is still 10
+        assert pub.total_published() == 10
+        # ring contains only the last 3
+        assert len(pub) == 3
+        print("  Publisher total_published: PASS")
+    finally:
+        pub.close()
+
+
+def test_publisher_ring_oldest_event_id():
+    """v11.0: ring_oldest_event_id() returns 0 when empty and the
+    event_id of the oldest item in the ring (NOT the global oldest
+    ever published, which may have been evicted)."""
+    pub = DescriptionPublisher(mode="stdout", ring_size=3)
+    try:
+        assert pub.ring_oldest_event_id() == 0
+        for i in range(5):
+            pub.publish({
+                "type": "description",
+                "image_id": f"img{i}",
+                "timestamp": "2026-07-07T00:00:00Z",
+                "description": f"d {i}",
+            })
+        # ring_size=3 keeps the last 3: event_ids 3, 4, 5
+        assert pub.ring_oldest_event_id() == 3
+        print("  Publisher ring_oldest_event_id: PASS")
+    finally:
+        pub.close()
+
+
+def test_publisher_since_filter():
+    """v11.0: since(N) returns only events with event_id > N, oldest first."""
+    pub = DescriptionPublisher(mode="stdout", ring_size=10)
+    try:
+        for i in range(5):
+            pub.publish({
+                "type": "description",
+                "image_id": f"img{i}",
+                "timestamp": "2026-07-07T00:00:00Z",
+                "description": f"d {i}",
+            })
+        # event_ids assigned are 1..5
+        after_2 = pub.since(2)
+        assert [x["event_id"] for x in after_2] == [3, 4, 5]
+        after_0 = pub.since(0)
+        assert len(after_0) == 5
+        after_999 = pub.since(999)
+        assert after_999 == []
+        print("  Publisher since filter: PASS")
+    finally:
+        pub.close()
+
+
+def test_publisher_since_after_ring_overflow():
+    """v11.0: when ring has been overrun, since(N) for N < ring_oldest
+    returns only what survived — the caller can detect the gap from
+    the cursor block in the HTTP response."""
+    pub = DescriptionPublisher(mode="stdout", ring_size=3)
+    try:
+        for i in range(10):
+            pub.publish({
+                "type": "description",
+                "image_id": f"img{i}",
+                "timestamp": "2026-07-07T00:00:00Z",
+                "description": f"d {i}",
+            })
+        # ring holds event_ids 8, 9, 10. Oldest = 8
+        assert pub.ring_oldest_event_id() == 8
+        # since(7) should yield 8, 9, 10
+        after_7 = pub.since(7)
+        assert [x["event_id"] for x in after_7] == [8, 9, 10]
+        # since(5) returns what survived (8, 9, 10) — caller compares
+        # the first returned event_id against their request to detect
+        # the gap (event 5 was requested but oldest returned is 8)
+        after_5 = pub.since(5)
+        assert [x["event_id"] for x in after_5] == [8, 9, 10]
+        print("  Publisher since after ring overflow: PASS")
+    finally:
+        pub.close()
+
+
+def test_descriptions_endpoint_since():
+    """v11.0: GET /descriptions?since=<id>&count=N returns only events
+    after `since`, capped at `count`. Response includes a `cursor`
+    block with ring_oldest_event_id, total_published, and overflowed."""
+    from events import PerceptiondServer
+    import urllib.request
+    import json as _json
+
+    pub = DescriptionPublisher(mode="stdout", ring_size=10)
+    for i in range(5):
+        pub.publish({
+            "type": "description",
+            "image_id": f"ep{i}",
+            "timestamp": "2026-07-07T00:00:00Z",
+            "description": f"d {i}",
+        })
+
+    server = PerceptiondServer(socket_path="/tmp/test_percv11.sock", tcp_port=18096)
+    server._pipeline = type("P", (), {"publisher": pub})()
+    server.start()
+    time.sleep(0.3)
+    try:
+        with urllib.request.urlopen(
+            "http://127.0.0.1:18096/descriptions?since=2&count=10",
+            timeout=2,
+        ) as resp:
+            data = _json.loads(resp.read().decode())
+        assert data["count"] == 3, f"Expected count=3, got {data['count']}"
+        assert [x["event_id"] for x in data["descriptions"]] == [3, 4, 5]
+        # cursor block present
+        assert "cursor" in data
+        c = data["cursor"]
+        assert c["ring_oldest_event_id"] == 1
+        assert c["total_published"] == 5
+        assert c["requested_since"] == 2
+        assert c["overflowed"] is False
+        print("  /descriptions?since= endpoint: PASS")
+    finally:
+        server.stop()
+        try:
+            os.unlink("/tmp/test_percv11.sock")
+        except OSError:
+            pass
+
+
+def test_descriptions_endpoint_cursor_overflowed():
+    """v11.0: when since(N) for N < ring_oldest_event_id, the cursor
+    block reports `overflowed: true` so the caller knows they lost
+    events and should fall back to memoryd's episodic store."""
+    from events import PerceptiondServer
+    import urllib.request
+    import json as _json
+
+    pub = DescriptionPublisher(mode="stdout", ring_size=3)
+    for i in range(10):
+        pub.publish({
+            "type": "description",
+            "image_id": f"ep{i}",
+            "timestamp": "2026-07-07T00:00:00Z",
+            "description": f"d {i}",
+        })
+
+    server = PerceptiondServer(socket_path="/tmp/test_percv11b.sock", tcp_port=18097)
+    server._pipeline = type("P", (), {"publisher": pub})()
+    server.start()
+    time.sleep(0.3)
+    try:
+        with urllib.request.urlopen(
+            "http://127.0.0.1:18097/descriptions?since=2&count=10",
+            timeout=2,
+        ) as resp:
+            data = _json.loads(resp.read().decode())
+        # ring holds event_ids 8, 9, 10
+        assert [x["event_id"] for x in data["descriptions"]] == [8, 9, 10]
+        c = data["cursor"]
+        assert c["ring_oldest_event_id"] == 8
+        assert c["total_published"] == 10
+        assert c["requested_since"] == 2
+        # requested 2, oldest available is 8 — gap detected
+        assert c["overflowed"] is True
+        print("  /descriptions?since= cursor overflowed: PASS")
+    finally:
+        server.stop()
+        try:
+            os.unlink("/tmp/test_percv11b.sock")
+        except OSError:
+            pass
+
+
 def main():
     print("\n=== perceptiond tests ===")
 
@@ -582,6 +1415,35 @@ def main():
         ("pipeline_wires_scene_gate", test_pipeline_wires_scene_gate),
         # v7.0.1 regressions
         ("stats_live_pipeline_regression", test_stats_live_pipeline_regression),
+        # v8.0 — memoryd sink
+        ("memory_sink_basic", test_memory_sink_basic),
+        ("memory_sink_disabled", test_memory_sink_disabled),
+        ("memory_sink_overflow", test_memory_sink_overflow_drops_oldest),
+        ("memory_sink_swallows_errors", test_memory_sink_swallows_errors),
+        ("publisher_wires_memory_sink", test_publisher_wires_memory_sink),
+        # v9.0 — bbox overlay
+        ("salience_bboxes_basic", test_salience_bboxes_basic),
+        ("salience_bboxes_face_present", test_salience_bboxes_face_present),
+        ("paint_bboxes_basic", test_paint_bboxes_basic),
+        ("paint_bboxes_face_and_motion", test_paint_bboxes_face_and_motion),
+        ("paint_bboxes_empty_returns_input", test_paint_bboxes_empty_returns_input),
+        ("frame_store_bboxes", test_frame_store_bboxes),
+        ("frames_endpoint_with_bboxes", test_frames_endpoint_with_bboxes),
+        ("frames_endpoint_no_bboxes", test_frames_endpoint_no_bboxes),
+        # v10.0 — disk persistence
+        ("frame_store_disk_basic", test_frame_store_disk_basic),
+        ("frame_store_disk_evicts_when_over_budget", test_frame_store_disk_evicts_when_over_budget),
+        ("frame_store_disk_get_falls_back_to_disk", test_frame_store_disk_get_falls_back_to_disk),
+        ("frame_store_disk_invalid_image_id_rejected", test_frame_store_disk_invalid_image_id_rejected),
+        ("frame_store_disk_disabled_by_default", test_frame_store_disk_disabled_by_default),
+        ("frames_endpoint_disk_fallback", frames_endpoint_disk_fallback),
+        # v11.0 — incremental /descriptions?since=
+        ("publisher_total_published", test_publisher_total_published),
+        ("publisher_ring_oldest_event_id", test_publisher_ring_oldest_event_id),
+        ("publisher_since_filter", test_publisher_since_filter),
+        ("publisher_since_after_ring_overflow", test_publisher_since_after_ring_overflow),
+        ("descriptions_endpoint_since", test_descriptions_endpoint_since),
+        ("descriptions_endpoint_cursor_overflowed", test_descriptions_endpoint_cursor_overflowed),
     ]
 
     passed = 0

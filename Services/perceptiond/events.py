@@ -14,6 +14,8 @@ import time
 import uuid
 from collections import deque
 from typing import Optional, List, Deque
+from urllib import request as _urlrequest
+from urllib.error import URLError, HTTPError
 
 
 RING_BUFFER_SIZE = 200  # max descriptions held in memory
@@ -22,6 +24,120 @@ FRAME_BUFFER_SIZE = 50   # max per-event JPEGs (thumbnails) kept for /frames/<id
 # v7.0 — SSE /events pub-sub
 EVENT_BUS_REPLAY = 20         # last N descriptions replayed to a new subscriber
 EVENT_BUS_PER_SUBSCRIBER = 64 # per-subscriber bounded queue (overwrite-on-full)
+
+# v8.0 — memoryd ingest hook
+MEMORY_SINK_QUEUE_CAP = 256   # bounded cross-daemon queue (overwrite-on-full)
+MEMORY_SINK_TIMEOUT = 2.0     # per-request HTTP timeout (seconds) — tight, daemon must stay live
+
+
+class MemorySink:
+    """v8.0 — fire-and-forget HTTP forwarder to memoryd.
+
+    Each published description is also POSTed to `memoryd_url` (e.g.
+    `http://127.0.0.1:8090/memories`) as an `episodic` memory. Runs on a
+    background thread with a bounded queue so the VLM/publisher hot path
+    is never blocked by an unhealthy or slow memoryd. Counters exposed
+    via `stats()` and `/status` for observability.
+    """
+
+    def __init__(
+        self,
+        url: Optional[str] = None,
+        queue_cap: int = MEMORY_SINK_QUEUE_CAP,
+        timeout: float = MEMORY_SINK_TIMEOUT,
+    ):
+        self._url = url
+        self._queue_cap = max(1, queue_cap)
+        self._timeout = max(0.1, float(timeout))
+        self._queue: Deque[dict] = deque(maxlen=self._queue_cap)
+        self._lock = threading.Lock()
+        self._sent = 0
+        self._dropped = 0
+        self._errors = 0
+        self._enabled = bool(url)
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        if self._enabled:
+            self._thread = threading.Thread(
+                target=self._run, name="perceptiond-memory-sink", daemon=True
+            )
+            self._thread.start()
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    def submit(self, event: dict) -> None:
+        """Enqueue an event for delivery. Non-blocking, overwrites oldest on overflow."""
+        if not self._enabled:
+            return
+        with self._lock:
+            # Bounded queue — if full, drop oldest and count it.
+            if len(self._queue) >= self._queue_cap:
+                self._dropped += 1
+            self._queue.append(dict(event))
+
+    def _drain_one(self) -> Optional[dict]:
+        with self._lock:
+            if not self._queue:
+                return None
+            return self._queue.popleft()
+
+    def _post(self, payload: dict) -> bool:
+        if not self._url:
+            return False
+        try:
+            data = json.dumps(payload).encode("utf-8")
+            req = _urlrequest.Request(
+                self._url,
+                data=data,
+                method="POST",
+                headers={"Content-Type": "application/json", "Accept": "application/json"},
+            )
+            with _urlrequest.urlopen(req, timeout=self._timeout) as resp:
+                # memoryd returns 200 on /memories POST; anything in [200,300) is OK.
+                if 200 <= resp.status < 300:
+                    return True
+                with self._lock:
+                    self._errors += 1
+                return False
+        except (HTTPError, URLError, TimeoutError, OSError):
+            with self._lock:
+                self._errors += 1
+            return False
+
+    def _run(self) -> None:
+        # Single consumer thread. Polls the queue on a short interval so we
+        # exit promptly on shutdown but don't busy-spin when idle.
+        while not self._stop.is_set():
+            event = self._drain_one()
+            if event is None:
+                self._stop.wait(0.1)
+                continue
+            if self._post(event):
+                with self._lock:
+                    self._sent += 1
+            else:
+                with self._lock:
+                    # _post already incremented _errors; nothing else to do.
+                    pass
+
+    def stats(self) -> dict:
+        with self._lock:
+            return {
+                "enabled": self._enabled,
+                "url": self._url,
+                "queued": len(self._queue),
+                "queue_cap": self._queue_cap,
+                "sent": self._sent,
+                "dropped": self._dropped,
+                "errors": self._errors,
+            }
+
+    def close(self) -> None:
+        self._stop.set()
+        if self._thread and self._thread.is_alive() and self._thread is not threading.current_thread():
+            self._thread.join(timeout=2.0)
 
 
 class EventBus:
@@ -73,38 +189,253 @@ class EventBus:
 class FrameStore:
     """Thread-safe ring buffer of per-event JPEG bytes keyed by image_id.
 
-    Bounded by FRAME_BUFFER_SIZE (insertion-ordered; oldest evicted first).
-    Used to back GET /frames/<image_id>.jpg so the UI can show what the VLM saw.
+    Bounded by FRAME_BUFFER_SIZE (insertion-ordered; oldest evicted first)
+    in memory, and by `max_bytes` on disk (LRU eviction). Used to back
+    GET /frames/<image_id>.jpg so the UI can show what the VLM saw.
+
+    v9.0: also tracks the per-event salience bboxes (list of
+    [x, y, w, h, kind]) alongside each JPEG so the GET handler can paint
+    the rectangles onto the thumbnail on demand. Old `put()` callers
+    that omit bboxes still work — the entry is stored with bboxes=[].
+
+    v10.0: optional disk persistence. When `image_dir` is set, every
+    accepted put also writes `<image_id>.jpg` and `<image_id>.json`
+    (bboxes) under that directory. `get()` falls back to the disk copy
+    when the in-memory entry has been evicted, so memoryd's image_id
+    references stay resolvable across process restarts and across the
+    in-memory ring being overrun. Disk is bounded by `max_bytes`; oldest
+    files are deleted (LRU) when the budget is exceeded. All disk I/O
+    is best-effort: a failed write must NOT fail the in-memory put.
     """
 
-    def __init__(self, capacity: int = FRAME_BUFFER_SIZE):
+    def __init__(
+        self,
+        capacity: int = FRAME_BUFFER_SIZE,
+        image_dir: "str | os.PathLike | None" = None,
+        max_bytes: int = 200 * 1024 * 1024,  # 200 MiB
+    ):
         self._capacity = capacity
+        self._image_dir = None
+        self._max_bytes = max(0, int(max_bytes))
         self._lock = threading.Lock()
         # Python 3.7+ dict preserves insertion order - used as ordered map.
-        self._frames = {}
+        self._frames = {}  # image_id -> jpeg bytes
+        self._bboxes = {}  # image_id -> list of [x, y, w, h, kind]
+        # Disk bookkeeping
+        self._disk_bytes = 0
+        self._disk_index: "dict[str, float]" = {}  # image_id -> mtime (LRU)
+        self._disk_sizes: "dict[str, int]" = {}    # image_id -> total on-disk bytes (jpg + sidecar)
+        self._evictions_disk = 0
+        self._hits_memory = 0
+        self._hits_disk = 0
+        self._misses = 0
+        if image_dir is not None:
+            try:
+                p = os.fspath(image_dir)
+                os.makedirs(p, exist_ok=True)
+                self._image_dir = p
+            except OSError:
+                # Disk persistence is opt-in best-effort; fall back to
+                # in-memory only if we can't create the directory.
+                self._image_dir = None
+        # v10.0: when image_dir is None, max_bytes is forced to 0 so the
+        # disk-write code path is a complete no-op. When image_dir is
+        # provided, the caller's value is respected.
+        if self._image_dir is None:
+            self._max_bytes = 0
+
+    # ---------- internal helpers ----------
+
+    def _disk_path(self, image_id: str, suffix: str) -> str:
+        assert self._image_dir is not None
+        return os.path.join(self._image_dir, f"{image_id}{suffix}")
+
+    def _normalize_bboxes(self, bboxes) -> list:
+        """Return [[x, y, w, h, kind], ...] or []."""
+        norm: list = []
+        if not bboxes:
+            return norm
+        for bb in bboxes:
+            try:
+                if isinstance(bb, dict):
+                    x = int(bb["x"]); y = int(bb["y"])
+                    w = int(bb["w"]); h = int(bb["h"])
+                    kind = str(bb.get("kind", "region"))
+                elif len(bb) >= 4:
+                    x, y, w, h = (int(v) for v in bb[:4])
+                    kind = str(bb[4]) if len(bb) >= 5 else "region"
+                else:
+                    continue
+                if w > 0 and h > 0:
+                    norm.append([x, y, w, h, kind])
+            except (TypeError, ValueError, KeyError):
+                continue
+        return norm
+
+    def _validate(self, image_id: str, jpeg: bytes) -> bool:
+        if not image_id or jpeg is None or len(jpeg) < 2 or jpeg[:2] != b"\xff\xd8":
+            return False
+        # Hex-safety is enforced at the HTTP boundary (handler's regex
+        # check). The in-memory API accepts any non-empty string so
+        # tests can use descriptive keys.
+        return True
+
+    def _evict_inmem(self) -> None:
+        if len(self._frames) > self._capacity:
+            oldest = next(iter(self._frames))
+            self._frames.pop(oldest, None)
+            self._bboxes.pop(oldest, None)
+
+    def _write_disk(self, image_id: str, jpeg: bytes, bboxes: list) -> None:
+        """Best-effort write of JPEG + sidecar. Updates index + byte count.
+        Enforces `max_bytes` via LRU eviction. Never raises."""
+        if self._image_dir is None or self._max_bytes == 0:
+            return
+        # v10.0: only hex image_ids touch disk so we never write a path
+        # like `../etc/passwd` if the in-memory API is called with a
+        # non-hex string. (The HTTP /frames/<id>.jpg handler validates
+        # hex too, but the disk path is an additional safety net.)
+        if not image_id or not all(c in "0123456789abcdef" for c in image_id):
+            return
+        try:
+            jpg_path = self._disk_path(image_id, ".jpg")
+            json_path = self._disk_path(image_id, ".json")
+            with open(jpg_path, "wb") as f:
+                f.write(jpeg)
+            with open(json_path, "w") as f:
+                json.dump(bboxes, f)
+            sidecar_size = os.path.getsize(json_path)
+            size = len(jpeg) + sidecar_size
+            with self._lock:
+                prev = self._disk_sizes.get(image_id)
+                if prev is not None:
+                    self._disk_bytes = max(0, self._disk_bytes - prev)
+                self._disk_sizes[image_id] = size
+                self._disk_bytes += size
+                self._disk_index[image_id] = time.time()
+                self._enforce_budget_locked()
+        except OSError:
+            # Disk full, permission denied, race with another writer — ignore.
+            pass
+
+    def _enforce_budget_locked(self) -> None:
+        """LRU-evict disk entries until `_disk_bytes <= _max_bytes`."""
+        guard = 0
+        while self._disk_bytes > self._max_bytes and self._disk_index and guard < 10_000:
+            guard += 1
+            oldest_id = next(iter(self._disk_index))
+            popped_size = self._disk_sizes.pop(oldest_id, 0)
+            self._disk_index.pop(oldest_id, None)
+            try:
+                os.unlink(self._disk_path(oldest_id, ".jpg"))
+            except OSError:
+                pass
+            try:
+                os.unlink(self._disk_path(oldest_id, ".json"))
+            except OSError:
+                pass
+            # Subtract from the running byte count so the loop terminates
+            # once the budget is satisfied, not when the index is empty.
+            self._disk_bytes = max(0, self._disk_bytes - popped_size)
+            self._evictions_disk += 1
+
+    def _read_disk(self, image_id: str):
+        """Return (jpeg_bytes, bboxes) or (None, None) on miss / error."""
+        if self._image_dir is None:
+            return None, None
+        jpg_path = self._disk_path(image_id, ".jpg")
+        json_path = self._disk_path(image_id, ".json")
+        try:
+            with open(jpg_path, "rb") as f:
+                jpeg = f.read()
+            bboxes = []
+            try:
+                with open(json_path, "r") as f:
+                    bboxes = json.load(f)
+            except (OSError, ValueError):
+                bboxes = []
+            return jpeg, bboxes
+        except OSError:
+            return None, None
+
+    # ---------- public API ----------
 
     def put(self, image_id: str, jpeg: bytes) -> None:
-        """Store a JPEG under image_id; evict oldest if over capacity.
-
-        Validates JPEG SOI marker (0xFFD8) so consumers can trust GET output.
-        Rejects empty image_id, None bytes, and non-JPEG payloads.
-        """
-        if not image_id or jpeg is None or len(jpeg) < 2 or jpeg[:2] != b"\xff\xd8":
+        """Store a JPEG under image_id; evict oldest in-memory if over capacity.
+        Also writes to disk (if image_dir is set) so the image survives eviction."""
+        if not self._validate(image_id, jpeg):
             return
         with self._lock:
-            # If image_id already present, remove first to re-insert at tail.
             self._frames.pop(image_id, None)
+            self._bboxes.pop(image_id, None)
             self._frames[image_id] = jpeg
-            while len(self._frames) > self._capacity:
-                # FIFO eviction: pop oldest inserted key.
-                # Note: dict.popitem() has no `last` kwarg (that's OrderedDict).
-                oldest = next(iter(self._frames))
-                self._frames.pop(oldest, None)
+            self._evict_inmem()
+        # Disk write outside the in-memory critical section (slow I/O).
+        self._write_disk(image_id, jpeg, [])
+
+    def put_with_bboxes(
+        self, image_id: str, jpeg: bytes, bboxes: Optional[list]
+    ) -> None:
+        """Store a JPEG + optional salience bboxes under image_id.
+
+        Bboxes are normalised to a flat list of [x, y, w, h, kind] so the
+        overlay renderer can iterate without special-casing the legacy
+        "face rectangles" format. None / empty bboxes are stored as [].
+        """
+        if not self._validate(image_id, jpeg):
+            return
+        norm = self._normalize_bboxes(bboxes)
+        with self._lock:
+            self._frames.pop(image_id, None)
+            self._bboxes.pop(image_id, None)
+            self._frames[image_id] = jpeg
+            self._bboxes[image_id] = norm
+            self._evict_inmem()
+        self._write_disk(image_id, jpeg, norm)
 
     def get(self, image_id: str):
-        """Return JPEG bytes for image_id or None."""
+        """Return JPEG bytes for image_id or None. Checks memory first,
+        then falls back to disk (v10.0)."""
         with self._lock:
-            return self._frames.get(image_id)
+            data = self._frames.get(image_id)
+        if data is not None:
+            self._hits_memory += 1
+            return data
+        # Disk fallback
+        if self._image_dir is not None:
+            jpg_path = self._disk_path(image_id, ".jpg")
+            try:
+                with open(jpg_path, "rb") as f:
+                    data = f.read()
+                if data[:2] == b"\xff\xd8":
+                    # Touch LRU mtime so a hit doesn't immediately get evicted.
+                    self._disk_index[image_id] = time.time()
+                    self._hits_disk += 1
+                    return data
+            except OSError:
+                pass
+        self._misses += 1
+        return None
+
+    def get_bboxes(self, image_id: str):
+        """Return salience bboxes for image_id, or None if not stored.
+
+        None is a sentinel meaning the entry was never tagged with
+        bboxes (e.g. inserted via plain put()). Use this to distinguish
+        from an empty list (an entry with zero detections).
+        """
+        with self._lock:
+            if image_id in self._bboxes:
+                return list(self._bboxes[image_id])
+        # Disk fallback (v10.0): read sidecar JSON
+        if self._image_dir is not None:
+            json_path = self._disk_path(image_id, ".json")
+            try:
+                with open(json_path, "r") as f:
+                    return json.load(f)
+            except (OSError, json.JSONDecodeError):
+                return None
+        return None
 
     def __len__(self) -> int:
         with self._lock:
@@ -113,6 +444,99 @@ class FrameStore:
     def clear(self) -> None:
         with self._lock:
             self._frames.clear()
+            self._bboxes.clear()
+
+    def stats(self) -> dict:
+        with self._lock:
+            return {
+                "files_on_disk": len(self._disk_index),
+                "bytes_on_disk": self._disk_bytes,
+                "evictions_disk": self._evictions_disk,
+                "hits_memory": self._hits_memory,
+                "hits_disk": self._hits_disk,
+                "misses": self._misses,
+                "image_dir": self._image_dir,
+                "max_bytes": self._max_bytes,
+                "capacity": self._capacity,
+            }
+
+
+# v9.0 — bounding-box overlay constants + helper
+BBOX_KIND_COLOR = {
+    "face": (0, 220, 60),       # green
+    "motion": (255, 180, 0),    # amber
+    "region": (255, 180, 0),    # amber (alias of motion)
+}
+BBOX_DEFAULT_COLOR = (0, 200, 255)  # cyan, used for unknown kinds
+
+
+def _paint_bboxes(jpeg_bytes: bytes, bboxes: list, thumbnail_w: int = 320, thumbnail_h: int = 240) -> Optional[bytes]:
+    """Return a new JPEG with salience rectangles drawn on the thumbnail.
+
+    `jpeg_bytes` is the per-event thumbnail the pipeline already stores.
+    `bboxes` may be either a dict (`{x, y, w, h, kind}`) or a list/tuple
+    (`[x, y, w, h, kind]`); both shapes are produced by the salience
+    detector and the legacy face list. Coordinates are in the *original*
+    capture resolution and are scaled to the thumbnail before drawing.
+    Returns None if PIL is unavailable or any frame-decode / draw step
+    fails — the caller should fall back to the raw JPEG in that case.
+    """
+    try:
+        from PIL import Image, ImageDraw  # noqa: F401
+    except ImportError:
+        return None
+    try:
+        from io import BytesIO
+
+        img = Image.open(BytesIO(jpeg_bytes)).convert("RGB")
+        scale_x = img.width / float(max(1, thumbnail_w))
+        scale_y = img.height / float(max(1, thumbnail_h))
+        if not bboxes:
+            # No annotations — re-encode and ship the original thumbnail
+            # untouched (Cache-Control, etc. unaffected).
+            buf = BytesIO()
+            img.save(buf, format="JPEG", quality=80)
+            return buf.getvalue()
+        draw = ImageDraw.Draw(img)
+        for bb in bboxes:
+            try:
+                if isinstance(bb, dict):
+                    x = int(bb.get("x", 0)); y = int(bb.get("y", 0))
+                    w = int(bb.get("w", 0)); h = int(bb.get("h", 0))
+                    kind = str(bb.get("kind", "region"))
+                else:
+                    x, y, w, h = (int(v) for v in bb[:4])
+                    kind = str(bb[4]) if len(bb) >= 5 else "region"
+            except (TypeError, ValueError):
+                continue
+            if w <= 0 or h <= 0:
+                continue
+            color = BBOX_KIND_COLOR.get(kind, BBOX_DEFAULT_COLOR)
+            x0 = max(0, int(round(x * scale_x)))
+            y0 = max(0, int(round(y * scale_y)))
+            x1 = min(img.width - 1, int(round((x + w) * scale_x)))
+            y1 = min(img.height - 1, int(round((y + h) * scale_y)))
+            if x1 <= x0 or y1 <= y0:
+                continue
+            # Two-stroke outline for visibility on noisy frames.
+            draw.rectangle([x0, y0, x1, y1], outline=color, width=2)
+            draw.rectangle(
+                [max(0, x0 - 1), max(0, y0 - 1), min(img.width - 1, x1 + 1), min(img.height - 1, y1 + 1)],
+                outline=color,
+                width=1,
+            )
+            # Small label badge in the top-left of the box.
+            label = kind
+            try:
+                draw.text((x0 + 2, max(0, y0 - 11)), label, fill=color)
+            except Exception:
+                pass
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=80)
+        return buf.getvalue()
+    except Exception as e:
+        print(f"perceptiond: bbox overlay render error: {e}", flush=True)
+        return None
 
 
 class DescriptionPublisher:
@@ -123,6 +547,9 @@ class DescriptionPublisher:
         mode: str = "stdout",
         socket_path: str = "/var/run/perceptiond.sock",
         ring_size: int = RING_BUFFER_SIZE,
+        memory_sink_url: Optional[str] = None,
+        memory_sink_timeout: float = MEMORY_SINK_TIMEOUT,
+        memory_sink_queue_cap: int = MEMORY_SINK_QUEUE_CAP,
     ):
         self.mode = mode
         self.socket_path = socket_path
@@ -132,6 +559,12 @@ class DescriptionPublisher:
         self._ring: Deque[dict] = deque(maxlen=ring_size)
         # v7.0: in-process pub/sub for the /events SSE stream
         self.event_bus = EventBus()
+        # v8.0: cross-daemon memoryd ingest hook (fire-and-forget)
+        self.memory_sink = MemorySink(
+            url=memory_sink_url,
+            queue_cap=memory_sink_queue_cap,
+            timeout=memory_sink_timeout,
+        )
 
         if mode == "socket":
             self._setup_socket()
@@ -146,7 +579,7 @@ class DescriptionPublisher:
         self._sock.listen(1)
 
     def publish(self, event: dict):
-        """Publish a description event (stdout + ring buffer)."""
+        """Publish a description event (stdout + ring buffer + memoryd sink)."""
         with self._lock:
             self._event_count += 1
             event["event_id"] = self._event_count
@@ -169,11 +602,64 @@ class DescriptionPublisher:
             except Exception:
                 pass
 
+        # v8.0: fan out to EventBus (SSE subscribers) AFTER stdout so a
+        # broken sink can't delay the publish path; memoryd is also
+        # non-blocking via its own bounded queue.
+        self.event_bus.publish(event)
+        if event.get("type") == "description" and event.get("description"):
+            self.memory_sink.submit({
+                "type": "episodic",
+                "content": event["description"],
+                "metadata": {
+                    "source": "perceptiond",
+                    "image_id": event.get("image_id"),
+                    "trigger_kind": event.get("trigger_kind"),
+                    "motion_score": event.get("motion_score"),
+                    "timestamp": event.get("timestamp"),
+                    "event_id": event.get("event_id"),
+                },
+            })
+
     def recent(self, count: int = 10) -> List[dict]:
         """Return last N descriptions (oldest first)."""
         with self._lock:
             n = max(0, min(count, len(self._ring)))
             return list(self._ring)[-n:]
+
+    def since(self, last_event_id: int) -> List[dict]:
+        """v11.0 — return all ring entries with event_id > last_event_id.
+
+        Used by `/descriptions?since=<id>` so a reconnecting client can
+        ask only for the events it has not yet seen without paying for
+        the full replay-on-connect window. If the ring has rolled past
+        `last_event_id` (oldest ring event_id > last_event_id), returns
+        an empty list — the caller should detect this via
+        `ring_oldest_event_id()` and fall back to `recent()`.
+        """
+        with self._lock:
+            return [e for e in self._ring if e.get("event_id", 0) > last_event_id]
+
+    def ring_oldest_event_id(self) -> int:
+        """v11.0 — event_id of the oldest entry in the ring (0 if empty).
+
+        Clients can compare this to their last_seen_id: if their id is
+        below the ring floor, they've been disconnected too long and
+        should fall back to a full `recent()` replay.
+        """
+        with self._lock:
+            if not self._ring:
+                return 0
+            return self._ring[0].get("event_id", 0)
+
+    def total_published(self) -> int:
+        """v11.0 — monotonic counter of all descriptions ever published.
+
+        Monotonically increasing across ring-buffer rotations so clients
+        can detect that they missed events (by comparing their
+        last_seen_id to total_published - len(ring)).
+        """
+        with self._lock:
+            return self._event_count
 
     def clear(self):
         """Clear the ring buffer."""
@@ -303,8 +789,11 @@ class PerceptiondServer:
                                 self.wfile.write(jpeg)
                     elif path.startswith("/frames/") and path.endswith(".jpg"):
                         # /frames/<image_id>.jpg - per-event thumbnail
+                        # v9.0: ?raw=1 → serve the original JPEG untouched.
+                        #        ?overlay=1 → force annotated even if no bboxes.
+                        #        default → annotate if bboxes are present, else raw.
                         image_id = path[len("/frames/"):-len(".jpg")]
-                        if not image_id or not all(c in "0123456789abcdef" for c in image_id):
+                        if not image_id or not all(c in "0123456789abcdefABCDEF" for c in image_id):
                             self._send_json(400, {"error": "invalid image_id"})
                         else:
                             frame_store = getattr(self.server, "frame_store", None)
@@ -319,13 +808,29 @@ class PerceptiondServer:
                                 if jpeg is None:
                                     self._send_json(404, {"error": "frame not found", "image_id": image_id})
                                 else:
+                                    bboxes = frame_store.get_bboxes(image_id) or []
+                                    want_raw = qs.get("raw") == "1"
+                                    want_overlay = qs.get("overlay") == "1"
+                                    # X-Bbox-Count reports the stored count regardless
+                                    # of overlay mode so clients can decide whether
+                                    # to show a "(N regions)" badge. X-Overlay=1
+                                    # only when the body was actually re-rendered.
+                                    x_count = str(len(bboxes))
+                                    if want_raw or (not bboxes and not want_overlay):
+                                        body = jpeg
+                                        x_overlay = "0"
+                                    else:
+                                        body = _paint_bboxes(jpeg, bboxes) or jpeg
+                                        x_overlay = "1" if body is not jpeg else "0"
                                     self.send_response(200)
                                     self.send_header("Content-Type", "image/jpeg")
-                                    self.send_header("Content-Length", str(len(jpeg)))
+                                    self.send_header("Content-Length", str(len(body)))
                                     self.send_header("Cache-Control", "public, max-age=3600")
                                     self.send_header("Access-Control-Allow-Origin", "*")
+                                    self.send_header("X-Bbox-Count", x_count)
+                                    self.send_header("X-Overlay", x_overlay)
                                     self.end_headers()
-                                    self.wfile.write(jpeg)
+                                    self.wfile.write(body)
                     elif path == "/stream":
                         self._serve_mjpeg_stream()
                     elif path == "/status":
@@ -339,20 +844,71 @@ class PerceptiondServer:
                         else:
                             self._send_json(503, {"status": "initializing"})
                     elif path == "/descriptions":
+                        # v11.0: supports both `?count=N` (last N) and
+                        # `?since=<event_id>` (everything newer than that
+                        # id). The two are mutually exclusive — `since`
+                        # wins if both are present. Response now also
+                        # includes a `cursor` block with ring_oldest_event_id,
+                        # total_published, and the request's effective
+                        # last_event_id, so the caller can detect a
+                        # ring-buffer overflow (their last_seen_id is
+                        # below ring_oldest_event_id and the `since`
+                        # filter dropped some events).
                         pipeline = getattr(self.server, "pipeline", None)
                         if pipeline is None:
                             server_obj = getattr(self.server, "_server_ref", None)
                             if server_obj is not None:
                                 pipeline = getattr(server_obj, "_pipeline", None)
-                        count = int(qs.get("count", "20"))
+                        qs = self._parse_query(self.path)
                         if pipeline and pipeline.publisher:
-                            items = pipeline.publisher.recent(count)
+                            pub = pipeline.publisher
+                            cursor = {
+                                "ring_oldest_event_id": pub.ring_oldest_event_id(),
+                                "total_published": pub.total_published(),
+                                "ring_size": len(pub),
+                                "ring_cap": pub._ring.maxlen,
+                            }
+                            since_raw = qs.get("since")
+                            if since_raw is not None:
+                                try:
+                                    last_id = int(since_raw)
+                                except ValueError:
+                                    self._send_json(400, {
+                                        "error": "since must be an integer event_id",
+                                    })
+                                    return
+                                items = pub.since(last_id)
+                                cursor["requested_since"] = last_id
+                                # If the ring has rolled past the client's
+                                # last id, the `since` filter returned []
+                                # but the client may have actually missed
+                                # events. Flag it so the UI can fall back
+                                # to a full /descriptions?count=N replay.
+                                cursor["overflowed"] = (
+                                    last_id > 0
+                                    and cursor["ring_oldest_event_id"] > 0
+                                    and last_id < cursor["ring_oldest_event_id"]
+                                )
+                            else:
+                                count = int(qs.get("count", "20"))
+                                items = pub.recent(count)
+                                cursor["requested_count"] = count
                             self._send_json(200, {
                                 "count": len(items),
                                 "descriptions": items,
+                                "cursor": cursor,
                             })
                         else:
-                            self._send_json(200, {"count": 0, "descriptions": []})
+                            self._send_json(200, {
+                                "count": 0,
+                                "descriptions": [],
+                                "cursor": {
+                                    "ring_oldest_event_id": 0,
+                                    "total_published": 0,
+                                    "ring_size": 0,
+                                    "ring_cap": 200,
+                                },
+                            })
                     elif path == "/events":
                         # v7.0: Server-Sent Events stream of new descriptions.
                         self._serve_sse_stream()
