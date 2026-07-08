@@ -63,6 +63,9 @@ export interface PerceptionStatus {
   sse_subscribers?: number;
   memory_sink?: PerceptionMemorySink;
   description_log?: PerceptionDescriptionLog | null;
+  // v13.0: salient frame event stream (raw "what the system saw" feed).
+  frame_event_log?: PerceptionFrameEventLog | null;
+  frame_event_bus?: PerceptionFrameEventBus | null;
   // v11.0: ring-buffer cursor fields exposed in /status.
   total_published?: number;
   ring_oldest_event_id?: number;
@@ -118,6 +121,63 @@ export interface PerceptionBackend {
   frameForId(imageId: string): Promise<Uint8Array | null>;
   memorySink(): Promise<PerceptionMemorySink | null>;
   logStats(): Promise<PerceptionDescriptionLog | null>;
+  // v13.0: salient frame event stream.
+  frameEventLogStats(): Promise<PerceptionFrameEventLog | null>;
+  frameEventBusStats(): Promise<PerceptionFrameEventBus | null>;
+  frameEvents(opts?: { count?: number; since?: number | null; sinceTs?: number | null }): Promise<PerceptionFrameEventsResponse | null>;
+}
+
+// v13.0 — salient frame event log (per-frame, not per-description).
+// Written by perceptiond on every salient frame regardless of whether
+// the SceneGate let the VLM run, so the dashboard sees the
+// "salience fired" signal even when no description was produced.
+export interface PerceptionFrameEventLog {
+  path: string;
+  lines: number;
+  bytes: number;
+  bytes_cap: number;
+  lines_cap: number;
+  truncated_count: number;
+  first_event_id: number;
+  last_event_id: number;
+  first_ts: string | null;
+  last_ts: string | null;
+  writes: number;
+  errors: number;
+  enabled: boolean;
+  queue_depth: number;
+}
+
+export interface PerceptionFrameEventBus {
+  ring_size: number;
+  ring_cap: number;
+  subscriber_count: number;
+  total_published: number;
+}
+
+export interface PerceptionBBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  kind: string;
+}
+
+export interface PerceptionFrameEvent {
+  type: string;
+  event_id: number;
+  timestamp: string;
+  trigger_kind: string;
+  motion_score: number;
+  face_count: number;
+  status: string;
+  bboxes: PerceptionBBox[];
+}
+
+export interface PerceptionFrameEventsResponse {
+  count: number;
+  events: PerceptionFrameEvent[];
+  cursor: Record<string, unknown>;
 }
 
 // v12.0 — durable description log
@@ -200,6 +260,31 @@ function createTauriBackend(): PerceptionBackend {
     async logStats(): Promise<PerceptionDescriptionLog | null> {
       try {
         return await invoke<PerceptionDescriptionLog>('perception_description_log_stats');
+      } catch {
+        return null;
+      }
+    },
+    async frameEventLogStats(): Promise<PerceptionFrameEventLog | null> {
+      try {
+        return await invoke<PerceptionFrameEventLog>('perception_frame_event_log_stats');
+      } catch {
+        return null;
+      }
+    },
+    async frameEventBusStats(): Promise<PerceptionFrameEventBus | null> {
+      try {
+        return await invoke<PerceptionFrameEventBus>('perception_frame_event_bus_stats');
+      } catch {
+        return null;
+      }
+    },
+    async frameEvents(opts?: { count?: number; since?: number | null; sinceTs?: number | null }): Promise<PerceptionFrameEventsResponse | null> {
+      try {
+        return await invoke<PerceptionFrameEventsResponse>('perception_frame_events', {
+          count: opts?.count ?? null,
+          since: opts?.since ?? null,
+          sinceTs: opts?.sinceTs ?? null,
+        });
       } catch {
         return null;
       }
@@ -289,6 +374,38 @@ function createFetchBackend(baseUrl: string): PerceptionBackend {
       try {
         const r = await fetch(`${baseUrl}/log/stats`);
         return r.ok ? ((await r.json()) as PerceptionDescriptionLog) : null;
+      } catch {
+        return null;
+      }
+    },
+    async frameEventLogStats(): Promise<PerceptionFrameEventLog | null> {
+      try {
+        const r = await fetch(`${baseUrl}/status`);
+        if (!r.ok) return null;
+        const s = (await r.json()) as PerceptionStatus;
+        return s.frame_event_log ?? null;
+      } catch {
+        return null;
+      }
+    },
+    async frameEventBusStats(): Promise<PerceptionFrameEventBus | null> {
+      try {
+        const r = await fetch(`${baseUrl}/status`);
+        if (!r.ok) return null;
+        const s = (await r.json()) as PerceptionStatus;
+        return s.frame_event_bus ?? null;
+      } catch {
+        return null;
+      }
+    },
+    async frameEvents(opts?: { count?: number; since?: number | null; sinceTs?: number | null }): Promise<PerceptionFrameEventsResponse | null> {
+      try {
+        const params = new URLSearchParams();
+        params.set('count', String(opts?.count ?? 20));
+        if (opts?.since != null) params.set('since', String(opts.since));
+        if (opts?.sinceTs != null) params.set('since_ts', String(opts.sinceTs));
+        const r = await fetch(`${baseUrl}/frame_events?${params.toString()}`);
+        return r.ok ? ((await r.json()) as PerceptionFrameEventsResponse) : null;
       } catch {
         return null;
       }

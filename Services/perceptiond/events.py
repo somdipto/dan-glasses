@@ -14,11 +14,12 @@ import time
 import uuid
 import queue
 from collections import deque
-from typing import Optional, List, Deque, Tuple
+from typing import Optional, List, Deque, Tuple, Dict
 from datetime import datetime, timezone  # v12.1 — for _iso_to_unix
 from urllib import request as _urlrequest
 from urllib.error import URLError, HTTPError
 from datetime import datetime, timezone
+import bisect
 
 
 RING_BUFFER_SIZE = 200  # max descriptions held in memory
@@ -39,6 +40,419 @@ MEMORY_SINK_TIMEOUT = 2.0     # per-request HTTP timeout (seconds) — tight, da
 DESCRIPTION_LOG_DEFAULT_LINES_CAP = 50_000   # ~30 days at 1/min
 DESCRIPTION_LOG_DEFAULT_BYTES_CAP = 50 * 1024 * 1024  # 50 MiB
 DESCRIPTION_LOG_DEFAULT_PATH = "~/.cache/dan-glasses/perceptiond/descriptions.log"
+
+
+# v13.0 — salient frame event stream. Every frame that passes the
+# salience gate is logged as a `frame_event` even if the VLM call
+# is later deduped / skipped. This is the data the dashboard needs
+# to show *what the system saw* independently of *what the VLM said*.
+FRAME_EVENT_RING_SIZE = 200        # in-memory ring (replay for new subscribers)
+FRAME_EVENT_REPLAY = 20            # last N replayed on /events attach
+FRAME_EVENT_PER_SUBSCRIBER = 64    # bounded per-subscriber queue
+FRAME_EVENT_LOG_DEFAULT_PATH = "~/.cache/dan-glasses/perceptiond/frame_events.log"
+FRAME_EVENT_LOG_DEFAULT_LINES_CAP = 50_000   # same budget as descriptions
+FRAME_EVENT_LOG_DEFAULT_BYTES_CAP = 50 * 1024 * 1024
+
+
+class FrameEventBus:
+    """v13.0 — pub/sub for salient frame events (the pre-VLM signal).
+
+    Mirrors the v7.0 description EventBus so /frame_events can replay
+    the last N salient frames to a new subscriber and stream new ones
+    in real time. Kept separate from descriptions so the SSE schema
+    can distinguish `event: frame_event` from `event: description`
+    on a single /events connection if we ever multiplex them.
+    """
+
+    def __init__(
+        self,
+        replay: int = FRAME_EVENT_REPLAY,
+        per_subscriber_cap: int = FRAME_EVENT_PER_SUBSCRIBER,
+        ring_size: int = FRAME_EVENT_RING_SIZE,
+    ):
+        self._lock = threading.Lock()
+        self._subscribers: List[deque] = []
+        self._replay = max(0, replay)
+        self._per_subscriber_cap = max(1, per_subscriber_cap)
+        # v13.0: own internal ring buffer so /frame_events can serve
+        # HTTP queries (recent/since) and SSE replay from the SAME
+        # structure. Decoupled from DescriptionPublisher because frame
+        # events fire at a different cadence and the schemas are
+        # different (frame_event has bboxes + salience fields, not
+        # description text). Cap defaults to FRAME_EVENT_RING (200).
+        self._ring: Deque[dict] = deque(maxlen=ring_size)
+        self._event_count = 0
+        self._ts_index: List[tuple] = []  # (ts_unix, event_id) sorted
+        self._id_index: Dict[int, int] = {}  # event_id -> ring position (not used; only for symmetry)
+
+    def attach(self, ring=None) -> tuple:
+        # ring arg kept for call-site symmetry with EventBus.attach; the
+        # bus now replays from its own internal ring regardless.
+        q: Deque[dict] = deque(maxlen=self._per_subscriber_cap)
+        with self._lock:
+            self._subscribers.append(q)
+            replay_items = list(self._ring)[-self._replay:]
+        for item in replay_items:
+            q.append(item)
+        return q, len(replay_items)
+
+    def detach(self, q) -> None:
+        with self._lock:
+            try:
+                self._subscribers.remove(q)
+            except ValueError:
+                pass
+
+    def publish(self, event: dict) -> None:
+        """Append a frame event to the internal ring AND fan out to subscribers."""
+        with self._lock:
+            self._event_count += 1
+            if "event_id" not in event or not event.get("event_id"):
+                event["event_id"] = self._event_count
+            eid = event.get("event_id", self._event_count)
+            self._ring.append(dict(event))
+            ts_unix = _iso_to_unix(event.get("timestamp", ""))
+            if ts_unix is not None:
+                bisect.insort(self._ts_index, (ts_unix, eid))
+            subs = list(self._subscribers)
+        for q in subs:
+            q.append(dict(event))
+
+    def subscriber_count(self) -> int:
+        with self._lock:
+            return len(self._subscribers)
+
+    # --- publisher-shape API (parity with DescriptionPublisher) ---
+
+    def recent(self, count: int = 20) -> List[dict]:
+        with self._lock:
+            n = max(0, min(count, len(self._ring)))
+            return list(self._ring)[-n:]
+
+    def since(self, last_event_id: int) -> List[dict]:
+        with self._lock:
+            return [e for e in self._ring if e.get("event_id", 0) > last_event_id]
+
+    def since_unix(self, ts_unix: float) -> List[dict]:
+        with self._lock:
+            pairs = list(self._ts_index)
+        # bisect_left on the sorted ts_index
+        if not pairs:
+            return []
+        keys = [p[0] for p in pairs]
+        idx = bisect.bisect_right(keys, ts_unix)
+        target_eids = {pairs[i][1] for i in range(idx, len(pairs))}
+        with self._lock:
+            return [e for e in self._ring if e.get("event_id", 0) in target_eids]
+
+    def total_emitted(self) -> int:
+        with self._lock:
+            return self._event_count
+
+    def ring_oldest_event_id(self) -> int:
+        with self._lock:
+            if not self._ring:
+                return 0
+            return self._ring[0].get("event_id", 0)
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._ring)
+
+
+class FrameEventLog:
+    """v13.0 — durable, append-only JSONL log of salient frame events.
+
+    Cold-tier backstop for /frame_events?since=<event_id> and
+    /frame_events?since_ts=<unix>, parallel to DescriptionLog. Bounded
+    by line count + byte count (insertion-order LRU eviction). The
+    submit() path is fire-and-forget so the salience hot path is never
+    blocked on disk I/O.
+    """
+
+    def __init__(
+        self,
+        path: "Optional[str]" = None,
+        lines_cap: int = FRAME_EVENT_LOG_DEFAULT_LINES_CAP,
+        bytes_cap: int = FRAME_EVENT_LOG_DEFAULT_BYTES_CAP,
+    ):
+        self._lines_cap = max(0, int(lines_cap))
+        self._bytes_cap = max(0, int(bytes_cap))
+        self._path_str: Optional[str] = None
+        self._lock = threading.RLock()
+        self._queue: "queue.Queue[Optional[dict]]" = queue.Queue()
+        self._thread: Optional[threading.Thread] = None
+        self._closed = False
+        self._writes = 0
+        self._errors = 0
+        self._lines = 0
+        self._bytes = 0
+        self._first_event_id = 0
+        self._last_event_id = 0
+        self._first_ts: Optional[str] = None
+        self._last_ts: Optional[str] = None
+        self._id_index: Dict[int, int] = {}  # event_id -> byte offset
+        self._ts_index: List[tuple] = []     # (ts_unix_float, event_id) sorted by ts
+        self._truncated_count = 0
+        if path is not None:
+            resolved = os.path.expanduser(str(path))
+            try:
+                os.makedirs(os.path.dirname(resolved), exist_ok=True)
+                self._path_str = resolved
+                self._rebuild_index_locked()
+            except OSError:
+                self._path_str = None
+        if self._path_str is not None:
+            self._start_worker()
+
+    def _start_worker(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._thread = threading.Thread(
+            target=self._worker, name="frame-event-log", daemon=True
+        )
+        self._thread.start()
+
+    def _worker(self) -> None:
+        path = self._path_str
+        if path is None:
+            return
+        while True:
+            item = self._queue.get()
+            if item is None:
+                self._queue.task_done()
+                return
+            try:
+                line = (json.dumps(item, separators=(",", ":")) + "\n").encode("utf-8")
+                with self._lock:
+                    byte_offset = self._bytes
+                with open(path, "ab") as f:
+                    f.write(line)
+                with self._lock:
+                    self._id_index[item.get("event_id", 0)] = byte_offset
+                    ts_unix = _iso_to_unix(item.get("timestamp", ""))
+                    if ts_unix is not None:
+                        bisect.insort(self._ts_index, (ts_unix, item.get("event_id", 0)))
+                    self._writes += 1
+                    self._lines += 1
+                    self._bytes += len(line)
+                    if self._first_event_id == 0:
+                        self._first_event_id = item.get("event_id", 0)
+                        self._first_ts = item.get("timestamp")
+                    self._last_event_id = item.get("event_id", 0)
+                    self._last_ts = item.get("timestamp")
+                    self._enforce_caps_locked()
+            except Exception:
+                with self._lock:
+                    self._errors += 1
+            finally:
+                self._queue.task_done()
+
+    def _enforce_caps_locked(self) -> None:
+        # Drop from the head (oldest) until under both caps. The on-disk
+        # file is rewritten in place to keep offset stability.
+        path = self._path_str
+        if path is None:
+            return
+        while (self._lines_cap and self._lines > self._lines_cap) or               (self._bytes_cap and self._bytes > self._bytes_cap):
+            try:
+                with open(path, "rb") as f:
+                    data = f.read()
+            except OSError:
+                return
+            nl = data.find(b"\n")
+            if nl < 0:
+                return
+            dropped = data[: nl + 1]
+            rest = data[nl + 1 :]
+            try:
+                with open(path, "wb") as f:
+                    f.write(rest)
+            except OSError:
+                return
+            self._lines -= 1
+            self._bytes -= len(dropped)
+            self._truncated_count += 1
+            # Rebuild id_index + ts_index (cheap; bounded caps).
+            self._rebuild_index_locked()
+
+    def _rebuild_index_locked(self) -> None:
+        self._id_index.clear()
+        self._ts_index.clear()
+        self._lines = 0
+        self._bytes = 0
+        self._first_event_id = 0
+        self._last_event_id = 0
+        self._first_ts = None
+        self._last_ts = None
+        path = self._path_str
+        if path is None:
+            return
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+        except OSError:
+            return
+        offset = 0
+        for line in data.splitlines():
+            if not line:
+                offset += 1
+                continue
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                offset += len(line) + 1
+                continue
+            eid = obj.get("event_id", 0)
+            self._id_index[eid] = offset
+            ts_unix = _iso_to_unix(obj.get("timestamp", ""))
+            if ts_unix is not None:
+                self._ts_index.append((ts_unix, eid))
+            self._lines += 1
+            self._bytes += len(line) + 1
+            if self._first_event_id == 0:
+                self._first_event_id = eid
+                self._first_ts = obj.get("timestamp")
+            self._last_event_id = eid
+            self._last_ts = obj.get("timestamp")
+            offset += len(line) + 1
+        self._ts_index.sort()
+
+    def submit(self, event: dict) -> None:
+        if self._path_str is None or self._closed:
+            return
+        self._queue.put(dict(event))
+
+    def _read_lines(self) -> List[str]:
+        path = self._path_str
+        if path is None:
+            return []
+        try:
+            with open(path, "rb") as f:
+                return f.read().splitlines()
+        except OSError:
+            return []
+
+    def recent(self, count: int) -> List[dict]:
+        """Return the last N lines as parsed dicts. Reads tail of file."""
+        path = self._path_str
+        if path is None:
+            return []
+        try:
+            with self._lock:
+                cap = self._lines_cap
+            count = max(0, min(int(count), cap))
+            with open(path, "rb") as f:
+                try:
+                    f.seek(0, os.SEEK_END)
+                    size = f.tell()
+                except OSError:
+                    size = 0
+                # Read up to 1 MiB from the tail; cheap for our caps.
+                tail_size = min(size, 1024 * 1024)
+                f.seek(size - tail_size)
+                data = f.read()
+            lines = data.splitlines()[-count:]
+            out: List[dict] = []
+            for ln in lines:
+                if not ln:
+                    continue
+                try:
+                    out.append(json.loads(ln))
+                except ValueError:
+                    continue
+            return out
+        except OSError:
+            return []
+
+    def since(self, last_event_id: int) -> List[dict]:
+        """Return all on-disk entries with event_id > last_event_id.
+
+        Uses the byte-offset index for O(N) read instead of O(N) scan
+        of the entire file. Falls back to full-file read if the index
+        is missing the entry.
+        """
+        path = self._path_str
+        if path is None:
+            return []
+        with self._lock:
+            ids = sorted(self._id_index.keys())
+            target_ids = [i for i in ids if i > last_event_id]
+        if not target_ids:
+            return []
+        # Re-read the file in one pass; cheaper than seeking per id
+        # when the file fits in page cache (it does; default 20 MiB).
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+        except OSError:
+            return []
+        target_set = set(target_ids)
+        out: List[dict] = []
+        for line in data.splitlines():
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                continue
+            if obj.get("event_id", 0) in target_set:
+                out.append(obj)
+        return out
+
+    def since_unix(self, ts_unix: float) -> List[dict]:
+        """Return all on-disk entries with timestamp > ts_unix (float seconds)."""
+        path = self._path_str
+        if path is None:
+            return []
+        with self._lock:
+            ts_pairs = list(self._ts_index)
+        target_eids: List[int] = []
+        for ts, eid in ts_pairs:
+            if ts > ts_unix:
+                target_eids.append(eid)
+        if not target_eids:
+            return []
+        return [e for e in self.since(min(target_eids) - 1) if e.get("event_id", 0) in set(target_eids)]
+
+    def read(self) -> List[dict]:
+        """Return all current on-disk entries (oldest first).
+
+        Test / audit convenience wrapper around `since(0)`. Production
+        callers should use `since(last_event_id)` or `since_unix(ts)` to
+        avoid loading the whole file.
+        """
+        return self.since(0)
+
+    def stats(self) -> dict:
+        with self._lock:
+            return {
+                "path": self._path_str,
+                "lines": self._lines,
+                "bytes": self._bytes,
+                "bytes_cap": self._bytes_cap,
+                "lines_cap": self._lines_cap,
+                "truncated_count": getattr(self, "_truncated_count", 0),
+                "first_event_id": self._first_event_id,
+                "last_event_id": self._last_event_id,
+                "first_ts": self._first_ts,
+                "last_ts": self._last_ts,
+                "writes": self._writes,
+                "errors": self._errors,
+                "enabled": self._path_str is not None,
+                "queue_depth": self._queue.qsize(),
+            }
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._queue.put_nowait(None)
+        except Exception:
+            pass
+        if self._thread and self._thread.is_alive() and self._thread is not threading.current_thread():
+            self._thread.join(timeout=2.0)
 
 
 class MemorySink:
@@ -1561,6 +1975,109 @@ class PerceptiondServer:
                             return
                         log = pipeline.publisher.description_log
                         body = log.stats() if log is not None else {}
+                        self._send_json(200, body)
+                    elif path == "/frame_events":
+                        # v13.0: salient-frame event log. Captures every
+                        # salient frame — including the ones the scene
+                        # gate dedup-skipped, so the dashboard can show
+                        # "saw X at T" even when no description fires.
+                        # Mirrors /descriptions' cursor semantics:
+                        #   ?count=N            — last N (default 20)
+                        #   ?since=<event_id>   — all with id > N (ring or log)
+                        #   ?since_ts=<unix>    — wall-clock delta (log fallback)
+                        # Cursor block carries ring/log stats so the
+                        # client can tell which tier served the response.
+                        pipeline = getattr(self.server, "pipeline", None)
+                        if pipeline is None:
+                            server_obj = getattr(self.server, "_server_ref", None)
+                            if server_obj is not None:
+                                pipeline = getattr(server_obj, "_pipeline", None)
+                        if pipeline is None or getattr(pipeline, "frame_event_log", None) is None:
+                            self._send_json(200, {
+                                "count": 0,
+                                "events": [],
+                                "cursor": {"source": "none"},
+                            })
+                        else:
+                            fe = pipeline.frame_event_log
+                            bus = getattr(pipeline, "frame_event_bus", None)
+                            qs = self._parse_query(self.path)
+                            cursor = {
+                                "ring_size": len(bus) if bus is not None else 0,
+                                "ring_cap": bus._ring.maxlen if bus is not None else 0,
+                                "ring_oldest_event_id": bus.ring_oldest_event_id() if bus is not None else 0,
+                                "total_emitted": bus.total_emitted() if bus is not None else 0,
+                                "log": fe.stats(),
+                                "source": "ring",
+                            }
+                            since_raw = qs.get("since")
+                            if since_raw is not None:
+                                try:
+                                    last_id = int(since_raw)
+                                except ValueError:
+                                    self._send_json(400, {
+                                        "error": "since must be an integer event_id",
+                                    })
+                                    return
+                                items = bus.since(last_id)
+                                cursor["requested_since"] = last_id
+                                overflowed_ring = (
+                                    last_id > 0
+                                    and cursor["ring_oldest_event_id"] > 0
+                                    and last_id < cursor["ring_oldest_event_id"]
+                                )
+                                if not items and overflowed_ring and fe._path_str:
+                                    items = fe.since(last_id)
+                                    cursor["source"] = "log"
+                                cursor["overflowed"] = overflowed_ring
+                            elif (since_ts_raw := qs.get("since_ts")) is not None:
+                                try:
+                                    ts_unix = float(since_ts_raw)
+                                except ValueError:
+                                    self._send_json(400, {
+                                        "error": "since_ts must be a unix timestamp (seconds)",
+                                    })
+                                    return
+                                items = []
+                                for ev in bus.recent(bus._ring.maxlen):
+                                    ev_ts = _iso_to_unix(ev.get("timestamp", ""))
+                                    if ev_ts is not None and ev_ts > ts_unix:
+                                        items.append(ev)
+                                cursor["requested_since_ts"] = ts_unix
+                                if not items and fe._path_str:
+                                    items = fe.since_unix(ts_unix)
+                                    cursor["source"] = "log_ts"
+                                else:
+                                    cursor["source"] = "ring_ts"
+                            else:
+                                count = int(qs.get("count", "20"))
+                                items = bus.recent(count)
+                                cursor["requested_count"] = count
+                            self._send_json(200, {
+                                "count": len(items),
+                                "events": items,
+                                "cursor": cursor,
+                            })
+                    elif path == "/frame_events/stats":
+                        # v13.0: stats block for the salient-frame log
+                        # (in-memory ring + cold-tier log) for parity with
+                        # /log/stats on the description side.
+                        pipeline = getattr(self.server, "pipeline", None)
+                        if pipeline is None:
+                            server_obj = getattr(self.server, "_server_ref", None)
+                            if server_obj is not None:
+                                pipeline = getattr(server_obj, "_pipeline", None)
+                        fe = getattr(pipeline, "frame_event_log", None) if pipeline is not None else None
+                        bus = getattr(pipeline, "frame_event_bus", None) if pipeline is not None else None
+                        body = {
+                            "log": fe.stats() if fe is not None else {},
+                            "ring": {
+                                "size": len(bus) if bus is not None else 0,
+                                "cap": bus._ring.maxlen if bus is not None else 0,
+                                "oldest_event_id": bus.ring_oldest_event_id() if bus is not None else 0,
+                                "total_emitted": bus.total_emitted() if bus is not None else 0,
+                            },
+                        }
                         self._send_json(200, body)
                     elif path == "/describe":
                         # v130: on-demand VLM. ?image_id=<hex|"latest">

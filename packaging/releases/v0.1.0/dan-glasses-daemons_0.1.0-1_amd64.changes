@@ -17,11 +17,11 @@ Changes:
    * Six systemd units: audiod, perceptiond, memoryd, toold, ttsd, os-toold.
    * All daemons bind to loopback by default.
 Checksums-Sha1:
- fc4db65708c3abb96d69ff042de017565cb8dfd3 57108 dan-glasses-daemons_0.1.0-1_all.deb
- dd3e38e1e56bb2d9680851b081b511edb3611664 5644 dan-glasses-daemons_0.1.0-1_amd64.buildinfo
+ 087c7247c1c56d1b252d055ca1ea837ca861f56a 62368 dan-glasses-daemons_0.1.0-1_all.deb
+ 7b4a67634add096efe763f6ae514889470366986 5644 dan-glasses-daemons_0.1.0-1_amd64.buildinfo
 Checksums-Sha256:
- 0bce8eed2e2b4f3abad568d6b0a4f7091cf6ce510e84854114cca55700b7e3b7 57108 dan-glasses-daemons_0.1.0-1_all.deb
- d865ef1522c9b81c7baaa788946ef77b00db726a6193216dd611f8b336fbbead 5644 dan-glasses-daemons_0.1.0-1_amd64.buildinfo
+ c27659857c08bf5676ac32df2aab46c3f40db60f87d0219989037caf111b7a6d 62368 dan-glasses-daemons_0.1.0-1_all.deb
+ 26560bc491d2fb171e0ac1095f9b62efc6a22373aa3544ce8585861227c78340 5644 dan-glasses-daemons_0.1.0-1_amd64.buildinfo
 Files:
- fd4886b4f0686a2a63fdd66fccb5ddb3 57108 utils optional dan-glasses-daemons_0.1.0-1_all.deb
- 5a624b92d4da1d7c01813058c060acce 5644 utils optional dan-glasses-daemons_0.1.0-1_amd64.buildinfo
+ 582e9a1ac1d5d2ced52f3e15772b4d22 62368 utils optional dan-glasses-daemons_0.1.0-1_all.deb
+ 15379857df982e876233a5ceddd1c5f9 5644 utils optional dan-glasses-daemons_0.1.0-1_amd64.buildinfo

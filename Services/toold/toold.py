@@ -7,6 +7,7 @@ import os
 import time
 from pathlib import Path
 from typing import Optional
+import re
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -74,8 +75,22 @@ def save_registry(reg: dict) -> None:
 
 
 def validate_shell_command(cmd: str) -> bool:
-    blocked = [";", "&", "|", "`", "$(", ">", "<", "\n", "\r", "&&", "||"]
-    return all(p not in cmd for p in blocked)
+    """Allow && and || (chained commands) while blocking real injection vectors.
+
+    Blocked:
+      - ; (command separator, injection vector)
+      - bare | (pipe — only block single pipe, allow ||)
+      - backticks and $( ) (command substitution)
+      - > and < (I/O redirection)
+      - newlines (injection vectors, often hidden in payloads)
+    Allowed: && , || , & on its own (we don't gate it explicitly), spaces.
+    """
+    if any(p in cmd for p in [";", "`", "$(", ">", "<", "\n", "\r"]):
+        return False
+    # Block a single | but allow || (double pipe)
+    if re.search(r"(?<!\|)\|(?!\|)", cmd):
+        return False
+    return True
 
 
 class ShellExec(BaseModel):

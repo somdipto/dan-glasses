@@ -768,3 +768,99 @@ other tests.
   memoryd's episodic search.
 
 **Committed:** `perceptiond v12.1: ?since_ts=<unix> wall-clock cursor + _ts_index`
+
+
+---
+
+## v13.0 — Salient frame event stream
+
+**Motivation.** The `/descriptions` feed is the *curated* stream — what
+the VLM actually described. The operator needs the *raw* stream too: what
+did the camera see that the system chose to ignore? When the dashboard
+goes quiet for 10 minutes, is the camera dead, the salience filter
+stuck, or just genuinely nothing interesting? The answer requires seeing
+the pre-VLM signal.
+
+**New surface.**
+
+- `FrameEventBus` — in-process pub/sub for salient frame events,
+  mirrors the v7.0 description `EventBus`. Per-subscriber bounded
+  deque (drop-oldest), 200-event ring, 20-event replay on attach.
+- `FrameEventLog` — durable append-only JSONL of every salient frame.
+  Same shape as `DescriptionLog`: bounded by lines_cap + bytes_cap,
+  background worker, `_id_index` + `_ts_index` for O(log N) cursor
+  reads, `read()` / `recent()` / `since()` / `since_unix()` /
+  `stats()` / `close()`.
+- `_publish_frame_event(result, status)` — pipeline helper. Called
+  on every salient frame in `_on_frame`, *before* the SceneGate. The
+  `status` field is informational: `"pending"` (just saw, VLM
+  not yet decided), `"described"` (VLM produced text — future
+  work, see parked list), or `"skipped"` (SceneGate suppressed).
+- `GET /frame_events?count=N` / `?since=<id>` / `?since_ts=<unix>` —
+  REST view of the salient frame stream. Same cursor shape as
+  `/descriptions` (`source: ring | log | ring_ts | log_ts`) so a
+  client can use the same reconnect logic.
+- `PerceptionPipeline.frame_event_log` / `frame_event_bus` — exposed
+  on the pipeline for /status, /stats, and the Tauri bridge.
+- `/status` and `/detailed_status` get two new blocks:
+  - `frame_event_log`: path, lines, bytes, caps, first/last
+    event_id + ts, writes, errors, queue depth.
+  - `frame_event_bus`: subscribers, total emitted, ring stats.
+- `frame_events` config block in `perceptiond.yaml` (enabled, path,
+  lines_cap, bytes_cap). Defaults: enabled, 20K lines, 20 MiB.
+
+**Event payload.**
+
+```json
+{
+  "type": "frame_event",
+  "event_id": 123,
+  "timestamp": "2026-07-08T13:04:56Z",
+  "trigger_kind": "motion",
+  "motion_score": 0.0527,
+  "face_count": 0,
+  "bboxes": [{"x": 448, "y": 187, "w": 192, "h": 223, "kind": "motion"}],
+  "status": "pending"
+}
+```
+
+**Why publish on the *salient* path (not all frames).** A camera at
+5 fps produces 18K frames/day. Logging them all would be wasteful and
+also defeat the purpose — the operator cares about the salience filter's
+output, not raw pixel noise. Publishing only on `result.salient == True`
+gives the operator the actual decision boundary.
+
+**Tauri bridge.** `PerceptionFrameEventLog` struct mirrors the
+`/status` block; `PerceptionFrameEventBus` for subscriber count.
+`perception_frame_event_log_stats` command on lib.rs. `frameEventLog()`
+method on both Tauri and fetch backends in `tauriApi.ts`. The
+React dashboard gets a `frameEventLog?: ...` field on `PerceptionStatus`
+so the existing `useEffect(poll status)` loop can render "saw N salient
+frames in the last minute" without a new IPC channel.
+
+**Tests (8 new).** `frame_event_log_basic_round_trip`,
+`frame_event_log_evicts_by_line_count`, `frame_event_log_since_unix`,
+`frame_event_bus_fanout`, `frame_event_bus_drops_oldest_when_full`,
+`pipeline_emits_frame_events` (any salient frame produces an event),
+`pipeline_emits_frame_event_on_vlm_path` (event fires before VLM,
+with the same bboxes the description will carry),
+`frame_events_endpoint_basic` (the HTTP handler).
+Total: 64 pytest + 1 main() = 65.
+
+**Out of scope (parked).**
+
+- `status: "described" | "skipped"` — the frame event is published
+  *before* the VLM runs (so the operator sees the salient signal
+  even when VLM is busy). To flip status, `_publish_frame_event`
+  needs the pending event_id cached on the pipeline and patched
+  after `_run_vlm` resolves. Currently the late status is implied
+  by the next `description` event for the same `image_id`. Plumbing
+  a "patch by event_id" call on `FrameEventLog` is straightforward
+  but unused by any consumer today.
+- SSE endpoint `/events/frame` — the bus exists, the endpoint
+  doesn't. Tauri dashboard polls `/frame_events?since=<id>`; a
+  streaming consumer is a v14 task.
+- Compact on-disk representation — JSONL is human-readable and
+  easy to grep; msgpack would 4× the disk cap efficiency.
+- Multi-process coalescing — per-process ring; a multi-device
+  fleet would need a shared counter.

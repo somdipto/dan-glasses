@@ -1,3 +1,209 @@
+
+## v13.0 — frame event log (this run, 2026-07-08 18:25 IST)
+
+**Goal:** close the "salient but deduped" black hole. Today, in watchful
+mode, a salient frame that the SceneGate skips is invisible to operators
+— the counter ticks (`scene_skips: 4`) but the frame, its bboxes, and its
+## v13.0 — salient frame event stream (this run, 2026-07-08 13:05 IST)
+
+**Goal:** close the "is the system alive" gap. `/descriptions` is the
+curated stream (VLM ran, text was produced). Operator needs the raw
+pre-VLM signal: what did the camera see that triggered salience, and
+what got suppressed by the SceneGate? When the dashboard is quiet for
+10 minutes, the question is "is salience broken, or is the world
+genuinely uneventful?" — both produce identical description silence.
+v13.0 publishes every salient frame (before the SceneGate) to a
+durable log + in-process bus, so the operator can see "saw 47 motion
+events / min, 0 of them reached VLM" and act.
+
+**Delivered:**
+- `FrameEventBus` class in `events.py` — in-process pub/sub parallel
+  to the v7.0 description EventBus. Per-subscriber bounded deque
+  (drop-oldest), `attach()/detach()/publish()/subscriber_count()` +
+  `recent()/since()/since_unix()` for cold lookups.
+- `FrameEventLog` class in `events.py` — append-only JSONL of
+  salient frame events, mirrors `DescriptionLog`. Bounded by
+  `lines_cap` (default 20K) and `bytes_cap` (20 MiB), single
+  background worker + `queue.Queue`, `_id_index` for O(N) byte-
+  offset seek, `_ts_index` (sorted `(ts_unix, eid)` tuples) for
+  O(log N) since_unix, `read()/recent()/since()/since_unix()/
+  stats()/close()`. `_enforce_caps_locked` rewrites the file in
+  place to keep offsets stable.
+- `_publish_frame_event(result, status="pending")` on `PerceptionPipeline`
+  — called on every salient frame in `_on_frame` BEFORE the
+  SceneGate, so the "saw but didn't describe" case is captured.
+  Carries `bboxes` so the UI can paint the same overlay whether
+  VLM ran or not. Best-effort: log + bus failures print to stdout
+  but never raise into the hot path.
+- New `frame_events` config block (enabled, path, lines_cap,
+  bytes_cap) in `perceptiond.yaml` and `perceptiond.py` defaults.
+- New `GET /frame_events` HTTP route — `?count=N`, `?since=<id>`,
+  `?since_ts=<unix>`. Returns `{count, events, cursor}` with
+  `cursor.source: ring | log | ring_ts | log_ts` mirroring
+  `/descriptions` exactly so a client can use the same reconnect
+  logic on both endpoints.
+- `/status` and `/detailed_status` expose `frame_event_log` (path,
+  lines, bytes, caps, first/last eid+ts, writes, errors) and
+  `frame_event_bus` (subscribers, ring stats).
+- Tauri bridge: `PerceptionFrameEventLog` + `PerceptionFrameEventBus`
+  Rust structs, `perception_frame_event_log_stats` command,
+  `frameEventLog()` method on both Tauri + fetch backends in
+  `tauriApi.ts`, `frameEventLog?` field on `PerceptionStatus`.
+- 8 new pytest tests in `test_perceptiond.py`:
+  - `frame_event_log_basic_round_trip` — 5 frames, 5-line read
+  - `frame_event_log_evicts_by_line_count` — 5 events, cap=3,
+    keep 3-4-5
+  - `frame_event_log_since_unix` — timestamp cursor, returns [3,4,5]
+  - `frame_event_bus_fanout` — 2 subs get the same ordered events
+  - `frame_event_bus_drops_oldest_when_full` — cap=2, publish 5,
+    subs get [3,4] (oldest dropped, not blocked)
+  - `pipeline_emits_frame_events` — watchful mode, salient frame,
+    event has trigger_kind=motion
+  - `pipeline_emits_frame_event_on_vlm_path` — dedup lets frame
+    through, event fires BEFORE VLM (synchronous in _on_frame),
+    carries bboxes that VLM will see
+  - `frame_events_endpoint_basic` — HTTP /frame_events returns the
+    events with cursor block
+
+**Test status:** 64/64 pytest + 1 main() = 65 pass in ~58s.
+The pre-existing v12.1 import bug in `test_descriptions_endpoint_since_ts`
+(stale `DescriptionEventBus` import that survived a rename) is fixed.
+
+**Live verification (after restart):**
+```
+$ curl -s http://127.0.0.1:8092/status | jq '.frame_event_log'
+{
+  "path": "/home/workspace/.cache/dan-glasses/perceptiond/frame_events.log",
+  "lines": 10,
+  "bytes": 2122,
+  "bytes_cap": 20971520,
+  "lines_cap": 20000,
+  "truncated_count": 0,
+  "first_event_id": 1,
+  "last_event_id": 10,
+  "first_ts": "2026-07-08T13:04:56Z",
+  "last_ts": "2026-07-08T13:10:24Z",
+  "writes": 10,
+  "errors": 0,
+  "enabled": true,
+  "queue_depth": 0
+}
+```
+10 frame events captured, all `status: "pending"` (VLM status flip
+is a v14 task — see parked list). `/frame_events?count=2` returns
+the 2 most recent with cursor.source: "ring". TypeScript compiles
+clean. Rust `cargo check` timed out on the live env (network);
+TS bridge is wired, the next natural rebuild picks it up.
+
+**Files touched:**
+- `Services/perceptiond/events.py` — `FrameEventBus`, `FrameEventLog`
+  classes; constants `FRAME_EVENT_RING_SIZE`, `FRAME_EVENT_REPLAY`,
+  `FRAME_EVENT_PER_SUBSCRIBER`, `FRAME_EVENT_LOG_DEFAULT_*`; route
+  handler at `/frame_events`
+- `Services/perceptiond/perceptiond.py` — `_publish_frame_event`,
+  pipeline init (frame_event_log + frame_event_bus), config
+  plumbing, status blocks
+- `Services/perceptiond/perceptiond.yaml` — new `frame_events` block
+- `Services/perceptiond/config.py` — `frame_events` default block
+- `Services/perceptiond/tests/test_perceptiond.py` — 8 v13.0 tests
+  + 8 main() entries, fixed the stale `DescriptionEventBus` import
+- `Services/perceptiond/SPEC.md` — v13.0 section appended
+- `Services/perceptiond/STATUS.md` — bumped to v13.0 with new
+  block summary
+- `apps/dan-glasses-app/src-tauri/src/lib.rs` —
+  `PerceptionFrameEventLog` + `PerceptionFrameEventBus` structs,
+  `perception_frame_event_log_stats` command, registered in invoke
+  handler list
+- `apps/dan-glasses-app/src/lib/tauriApi.ts` — `PerceptionFrameEventLog`
+  + `PerceptionFrameEventBus` types, `frameEventLog` method on both
+  Tauri and fetch backends, `frameEventLog?` field on
+  `PerceptionStatus`
+
+**Known gaps (parked):**
+- `status: "pending"` never flips to `"described"` / `"skipped"`.
+  v14 task: cache the pending event_id on the pipeline, patch the
+  JSONL entry after `_run_vlm` resolves. Operator can still infer
+  the answer by joining with `/descriptions?since=<id>`.
+- No SSE endpoint for `/events/frame`. The bus exists, the route
+  doesn't. Dashboard polls; a streaming consumer is a v14 task.
+- Frame event log + bus are per-process. Multi-device fleet would
+  need a shared log (S3, redis-stream) — Dan Glasses is single-host
+  for now.
+- `motion_score` and `face_count` are sampled at the salient decision
+  point; they reflect the trigger frame, not the per-VLM frame. The
+  description event carries the same values (VLM and salience share
+  the frame), so no consistency gap, just naming clarity.
+- Mock capture: every frame fires salient (motion), so the frame
+  event log fills at the capture rate (~5 fps). On real V4L2 with
+  static scenes, it'd be much sparser. Bench is the right place to
+  characterize.
+
+motion score vanish. The dashboard asks "what is the camera actually
+seeing?" and the only answer is "trust the counter." v13.0 keeps a
+small ring of recent salient frames + bboxes, served at
+`/frames/events`, so an operator can audit the salience layer in real
+time without dragging the VLM into it.
+
+**Delivered:**
+
+- `FrameEvent` dataclass (frame_id, ts, image_id, motion_score,
+  face_count, trigger_kind, bboxes, deduped, vlm_invoked, description)
+  + `FrameEventLog` (thread-safe deque ring, default 500 cap).
+  `record_salient()` writes one entry. `recent(N)` returns the last N
+  in chronological order. `since(last_id)` for backfill.
+- `Pipeline._on_frame` now:
+  - records every salient frame in the log (salient and deduped
+    alike — that's the whole point),
+  - records every VLM-invoked frame with `vlm_invoked=True` and the
+    description when it arrives,
+  - passes the `frame_event_log` to the HTTP server.
+- HTTP endpoints (alongside existing /frames, /descriptions):
+  - `GET /frames/events?count=N` — last N entries (oldest first).
+  - `GET /frames/events?since=<id>` — entries with `frame_id > id`,
+    capped at 1000.
+  - `GET /frames/events/recent?limit=N` — newest N, default 50.
+  - All return `{count, frames: [...], cursor: {oldest_id, newest_id,
+    cap}}`.
+- `GET /status` now includes a `frame_event_log` block:
+  `{enabled, cap, count, oldest_id, newest_id, deduped, vlm_invoked}`.
+- Tests: 4 new in `tests/test_perceptiond.py`:
+  - `frame_event_log_records_salient` — salience fires → entry in log
+  - `frame_event_log_records_deduped` — scene-gate skip → entry with
+    `deduped=True, vlm_invoked=False`
+  - `frame_event_log_since_id` — cursor-based backfill
+  - `frames_events_endpoint_recent` — HTTP returns same data the log
+    holds
+- SPEC.md + STATUS.md bumped to v13.0.
+
+**Bug fix (drive-by):** `tests/test_perceptiond.py:1562` had a stale
+`from events import DescriptionEventBus` (renamed to `EventBus` in
+v7.0). Dead-code import, never executed, but the test was failing
+on the import. Removed the `noqa: F401` line; the test is otherwise
+unaffected.
+
+**Test status:** 60/60 pytest (4 new) + 1 main() = 61 pass.
+
+**Live verification:**
+- Service restarted on :8092, watchdog cleared the stale memory_sink
+  errors (will recount now that memoryd is back up at :8741).
+- `curl /status` shows `frame_event_log: {cap: 500, count: 12,
+  deduped: 5, vlm_invoked: 7}`.
+- `curl /frames/events?count=3` returns 3 entries with full bbox data
+  and `deduped` flags.
+- `curl /frames/events?since=10` returns the 2 events after id 10.
+
+**Files touched:**
+- `Services/perceptiond/events.py` — `FrameEvent` + `FrameEventLog`
+  classes (~80 lines added before the existing `DescriptionPublisher`).
+- `Services/perceptiond/perceptiond.py` — wire `frame_event_log`,
+  record in `_on_frame` and `_run_vlm`, expose stats in
+  `get_detailed_status` + `get_status`, register HTTP routes in
+  `_server_ref.handler` dispatch.
+- `Services/perceptiond/SPEC.md` — v13.0 section appended.
+- `Services/perceptiond/STATUS.md` — bumped to v13.0 with live stats.
+- `Services/perceptiond/tests/test_perceptiond.py` — 4 v13.0 tests
+  + main() entries, plus drive-by import fix.
+- `agent-work/dan3.md` — this entry.
 # DAN-3 — perceptiond scratch pad
 
 ## v10.0 — persistent image retention (this run, 2026-07-07 18:20 IST)

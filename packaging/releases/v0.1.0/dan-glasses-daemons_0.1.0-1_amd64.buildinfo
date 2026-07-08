@@ -4,14 +4,14 @@ Binary: dan-glasses-daemons
 Architecture: all
 Version: 0.1.0-1
 Checksums-Md5:
- fd4886b4f0686a2a63fdd66fccb5ddb3 57108 dan-glasses-daemons_0.1.0-1_all.deb
+ 582e9a1ac1d5d2ced52f3e15772b4d22 62368 dan-glasses-daemons_0.1.0-1_all.deb
 Checksums-Sha1:
- fc4db65708c3abb96d69ff042de017565cb8dfd3 57108 dan-glasses-daemons_0.1.0-1_all.deb
+ 087c7247c1c56d1b252d055ca1ea837ca861f56a 62368 dan-glasses-daemons_0.1.0-1_all.deb
 Checksums-Sha256:
- 0bce8eed2e2b4f3abad568d6b0a4f7091cf6ce510e84854114cca55700b7e3b7 57108 dan-glasses-daemons_0.1.0-1_all.deb
+ c27659857c08bf5676ac32df2aab46c3f40db60f87d0219989037caf111b7a6d 62368 dan-glasses-daemons_0.1.0-1_all.deb
 Build-Origin: Debian
 Build-Architecture: amd64
-Build-Date: Wed, 08 Jul 2026 05:12:46 +0000
+Build-Date: Wed, 08 Jul 2026 13:02:51 +0000
 Build-Tainted-By:
  merged-usr-via-aliased-dirs
  usr-local-has-includes

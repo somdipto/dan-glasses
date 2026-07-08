@@ -1,6 +1,6 @@
 # perceptiond STATUS
 
-> **Live version: v12.1.0 (2026-07-08 IST).** Service restarted with the new
+> **Live version: v13.0.0 (2026-07-08 IST).** Service restarted with the new
 > `?since_ts=<unix>` wall-clock cursor. Clients now poll with both the
 > `since=<event_id>` cursor (fast) and a `since_ts=<unix>` cursor (survives
 > perceptiond restarts). The Tauri dashboard tracks `lastSeenTsRef` alongside
@@ -35,6 +35,34 @@
   `description_log_since_unix_survives_restart`,
   `descriptions_endpoint_since_ts`. Total: 56 pytest + 1 main() = 57.
 
+
+
+## What v13.0 ships
+
+- **`/frame_events?count=N|since=<id>|since_ts=<unix>`** — REST view
+  of the salient frame stream (raw "what the system saw" feed,
+  pre-VLM). Same cursor shape as `/descriptions` (`source: ring |
+  log | ring_ts | log_ts`).
+- **`FrameEventLog` / `FrameEventBus`** — durable JSONL + in-process
+  pub/sub for salient frames, mirrors the v12.0 description
+  architecture. Bounded by `lines_cap` (default 20K) and `bytes_cap`
+  (20 MiB), background worker, LRU eviction.
+- **`_publish_frame_event(result, status)`** — pipeline helper called
+  on every salient frame in `_on_frame`, *before* the SceneGate.
+  Bboxes included so the UI can paint the same overlay whether the
+  VLM ran or not.
+- **`/status` & `/detailed_status`** — two new blocks
+  `frame_event_log` and `frame_event_bus` exposing durable + live
+  counters.
+- **Tauri bridge** — `PerceptionFrameEventLog` / `PerceptionFrameEventBus`
+  structs, `perception_frame_event_log_stats` command, `frameEventLog()`
+  method on both backends in `tauriApi.ts`, `frameEventLog?: ...`
+  field on `PerceptionStatus`.
+- **Config** — new `frame_events` block in `perceptiond.yaml`
+  (enabled, path, lines_cap, bytes_cap).
+- **Tests (8 new)** — log round-trip + line-eviction + since_unix,
+  bus fanout + drop-oldest, pipeline-emits (watchful path + VLM
+  path), `/frame_events` HTTP. Total: 64 pytest + 1 main() = 65.
 ## What v12.0 ships
 
 - **Durable description log** — `DescriptionLog` writes every accepted

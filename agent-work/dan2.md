@@ -549,3 +549,37 @@
 - **SPEC.md bumped to v1.5.** Changelog entry above v1.4. Status line at top updated. No re-arch — purely build-and-run fix.
 - **v1.6 candidates (re-queued, not started):** HRM-Text post-processor integration, SIA-W+H secondary inference port, language auto-detect hot-swap, vad-threshold hot-reload, Loki per-segment push (currently histogram snapshots only).
 - **Operational note:** `start_health_server` already sets `SO_REUSEADDR` (audiod.py:255-259), which kept the once-flakey `test_status_last_segment_ms_defaults_to_zero` from being a real regression. Re-runs are clean.
+---
+
+## Re-run verification @ 2026-07-08 14:25 IST (DAN-2 scheduled fire)
+
+Brief re-fires identical to v1.0. State is the v1.6 build previously shipped.
+
+**Live check:**
+- `python3 audiod.py --port 8090` PID 74, uptime 28.9s
+- `0.0.0.0:8090` LISTEN
+- `GET /health` → 200 `{status:ok, service:audiod, readiness:{vad:true, whisper_binary:true, whisper_model:true, publisher:true, running:true}}`
+- `GET /status` → running, vad_ready, whisper binary + model OK, ptt_enabled false, no dropped segments, segment_timing idle
+- `GET /help` → 11 HTTP endpoints + `/stream` WS, full live/restart-only key split documented
+
+**Tests:** 177 passed, 2 skipped, 0 failed in 81.27s (20 test files).
+One flake on first run (likely port-reuse in `test_ws_stream`); clean re-run.
+
+**Deliverables present:**
+- `Services/audiod/SPEC.md` (22.4 KB, v1.6)
+- Working `audiod` service (live, full pipeline)
+- dan-glasses-app WS consumer wired (`/stream` @ ws://localhost:8091)
+
+Per the operational note in v1.6 entry, a future DAN-2 finding audiod live + tests green should record verification and idle. Done.
+
+## Re-run verification @ 2026-07-08 17:45 IST (DAN-2 scheduled fire, this run)
+
+Brief re-fires identical to v1.0. State still v1.6 build previously shipped.
+
+**Live check:**
+- `python3 audiod.py --port 8090` PID 88, uptime ~10s
+- `0.0.0.0:8090` LISTEN
+- `GET /health` → 200 `{status:ok, service:audiod, readiness:{vad:true, whisper_binary:true, whisper_model:true, publisher:true, running:true}}`
+- `GET /status` → running=true, vad_ready, whisper binary+model OK, ptt_enabled false, no dropped, 0 in-flight, ws_port 8091
+
+8/8 brief deliverables present and verified (directory, SPEC.md v1.6, ALSA capture, Silero VAD, whisper.cpp, PTT, tests 177/2-skip, Tauri/React app integration). No new work. Idle.

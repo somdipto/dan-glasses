@@ -26,7 +26,9 @@ interface StepState {
   detail?: string;
 }
 
-const STEP_IDS: ServiceId[] = ALL_SERVICES as unknown as ServiceId[];
+type StepId = ServiceId | 'devices';
+const STEP_IDS: StepId[] = [...(ALL_SERVICES as unknown as ServiceId[]), 'devices'];
+
 
 async function fetchJSON<T>(url: string, init?: RequestInit, timeoutMs = 8000): Promise<T> {
   const res = await fetch(url, {
@@ -53,11 +55,11 @@ interface AggregatorResponse {
   }>;
 }
 
-function emptySteps(): Record<ServiceId, StepState> {
-  return Object.fromEntries(STEP_IDS.map(s => [s, { status: 'pending', message: 'not run' }])) as Record<ServiceId, StepState>;
+function emptySteps(): Record<StepId, StepState> {
+  return Object.fromEntries(STEP_IDS.map(s => [s, { status: 'pending', message: 'not run' }])) as Record<StepId, StepState>;
 }
 
-function loadPersistedSteps(): Record<ServiceId, StepState> {
+function loadPersistedSteps(): Record<StepId, StepState> {
   const base = emptySteps();
   if (typeof window === 'undefined') return base;
   try {
@@ -65,8 +67,6 @@ function loadPersistedSteps(): Record<ServiceId, StepState> {
     if (!raw) return base;
     const parsed = JSON.parse(raw) as { steps?: Record<string, StepState> };
     if (!parsed || typeof parsed !== 'object' || !parsed.steps) return base;
-    // Merge: only accept steps for known service ids; coerce status to a
-    // valid StepStatus; fall back to 'pending' on any malformed value.
     const validStatuses: StepStatus[] = ['pending', 'running', 'ok', 'fail'];
     for (const s of STEP_IDS) {
       const incoming = parsed.steps[s];
@@ -86,7 +86,7 @@ function loadPersistedSteps(): Record<ServiceId, StepState> {
   }
 }
 
-function persistSteps(steps: Record<ServiceId, StepState>) {
+function persistSteps(steps: Record<StepId, StepState>) {
   if (typeof window === 'undefined') return;
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ steps, savedAt: Date.now() }));
@@ -111,7 +111,7 @@ async function checkHealthAggregator(): Promise<Record<ServiceId, HealthState>> 
     }
     const data = (await res.json()) as AggregatorResponse;
     const out = {} as Record<ServiceId, HealthState>;
-    for (const svc of STEP_IDS) {
+    for (const svc of ALL_SERVICES as unknown as ServiceId[]) {
       const entry = data.services[svc];
       if (entry?.ok) {
         out[svc] = {
@@ -136,7 +136,7 @@ async function checkHealthAggregator(): Promise<Record<ServiceId, HealthState>> 
 async function fallbackDirectHealth(lastChecked: number): Promise<Record<ServiceId, HealthState>> {
   const out = {} as Record<ServiceId, HealthState>;
   await Promise.all(
-    STEP_IDS.map(async (svc) => {
+    ALL_SERVICES.map(async (svc) => {
       try {
         const res = await fetch(`${apiBase(PORTS[svc])}${HEALTH_PATHS[svc]}`, {
           signal: AbortSignal.timeout(2500),
@@ -264,8 +264,85 @@ async function runToolTest() {
   return data;
 }
 
+interface DeviceProbe {
+  cameras: number;
+  microphones: number;
+  speakers: number;
+  cameraLabel: string | null;
+  micLabel: string | null;
+  micLevel: number; // peak amplitude over the sample window, 0..1
+  micError: string | null;
+}
+
+async function probeDevices(): Promise<DeviceProbe> {
+  const empty: DeviceProbe = {
+    cameras: 0,
+    microphones: 0,
+    speakers: 0,
+    cameraLabel: null,
+    micLabel: null,
+    micLevel: 0,
+    micError: null,
+  };
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) {
+    return empty;
+  }
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const cameras = devices.filter(d => d.kind === 'videoinput');
+  const microphones = devices.filter(d => d.kind === 'audioinput');
+  const speakers = devices.filter(d => d.kind === 'audiooutput');
+  const probe: DeviceProbe = {
+    cameras: cameras.length,
+    microphones: microphones.length,
+    speakers: speakers.length,
+    cameraLabel: cameras[0]?.label ?? null,
+    micLabel: microphones[0]?.label ?? null,
+    micLevel: 0,
+    micError: null,
+  };
+  if (microphones.length === 0) return probe;
+
+  // Capture a short audio clip to measure mic activity. Browser labels
+  // are only populated after a successful getUserMedia grant, so this
+  // also unlocks device names for the rest of the session.
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      video: false,
+    });
+    const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+    const source = ctx.createMediaStreamSource(stream);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    source.connect(analyser);
+    const buf = new Float32Array(analyser.fftSize);
+    let peak = 0;
+    const start = performance.now();
+    while (performance.now() - start < 800) {
+      analyser.getFloatTimeDomainData(buf);
+      for (let i = 0; i < buf.length; i++) {
+        const v = Math.abs(buf[i]);
+        if (v > peak) peak = v;
+      }
+      await new Promise(r => setTimeout(r, 30));
+    }
+    stream.getTracks().forEach(t => t.stop());
+    void ctx.close();
+    probe.micLevel = Math.min(1, peak);
+    // Re-enumerate now that labels are unlocked.
+    const labelled = await navigator.mediaDevices.enumerateDevices();
+    const cam = labelled.find(d => d.kind === 'videoinput' && d.label);
+    const mic = labelled.find(d => d.kind === 'audioinput' && d.label);
+    if (cam) probe.cameraLabel = cam.label;
+    if (mic) probe.micLabel = mic.label;
+  } catch (e) {
+    probe.micError = e instanceof Error ? e.message : String(e);
+  }
+  return probe;
+}
+
 export default function BootstrapWizard() {
-  const [stepState, setStepState] = useState<Record<ServiceId, StepState>>(loadPersistedSteps);
+  const [stepState, setStepState] = useState<Record<StepId, StepState>>(loadPersistedSteps);
   const [health, setHealth] = useState<Record<ServiceId, HealthState | null>>(
     Object.fromEntries(STEP_IDS.map(s => [s, null])) as Record<ServiceId, HealthState | null>,
   );
@@ -277,6 +354,7 @@ export default function BootstrapWizard() {
     { loading: false, message: 'not yet tested' },
   );
   const [finalSummary, setFinalSummary] = useState<string>('');
+  const [deviceProbe, setDeviceProbe] = useState<DeviceProbe | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // Persist step state across reloads. We snapshot only after a manual
@@ -312,18 +390,20 @@ export default function BootstrapWizard() {
   // Cleanup object URL
   useEffect(() => () => { if (audioUrl) URL.revokeObjectURL(audioUrl); }, [audioUrl]);
 
-  function setStatus(svc: ServiceId, status: StepStatus, message: string, detail?: string) {
+  function setStatus(svc: StepId, status: StepStatus, message: string, detail?: string) {
     setStepState(prev => ({ ...prev, [svc]: { status, message, detail } }));
   }
 
-  async function runServiceHealthStep(svc: ServiceId) {
+  async function runServiceHealthStep(svc: StepId) {
+    if (svc === 'devices') return true; // device probe runs in its own step
     setStatus(svc, 'running', 'checking…');
-    const h = await checkHealthAggregator() as unknown as Record<ServiceId, HealthState>;
-    if (!h[svc]?.ok) {
-      setStatus(svc, 'fail', h[svc]?.message);
+    const h = (await checkHealthAggregator()) as unknown as Record<ServiceId, HealthState>;
+    const entry = h[svc as ServiceId];
+    if (!entry?.ok) {
+      setStatus(svc, 'fail', entry?.message ?? 'unreachable');
       return false;
     }
-    setStatus(svc, 'ok', h[svc]?.message);
+    setStatus(svc, 'ok', entry.message);
     return true;
   }
 
@@ -383,14 +463,38 @@ export default function BootstrapWizard() {
     }
   }
 
+  async function runDeviceStep() {
+    setStatus('devices', 'running', 'probing camera + microphone…');
+    try {
+      const probe = await probeDevices();
+      setDeviceProbe(probe);
+      const hasCam = probe.cameras > 0;
+      const hasMic = probe.microphones > 0;
+      if (!hasCam && !hasMic) {
+        setStatus('devices', 'fail', 'no camera or microphone detected', 'check browser permissions');
+        return false;
+      }
+      const detail = `cam:${probe.cameras} (${probe.cameraLabel ?? 'unnamed'}) · mic:${probe.microphones} (${probe.micLabel ?? 'unnamed'}) · level:${(probe.micLevel * 100).toFixed(0)}%`;
+      setStatus('devices', 'ok', 'media devices ok', detail);
+      return true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setStatus('devices', 'fail', 'device probe failed', msg);
+      return false;
+    }
+  }
+
   async function runAll() {
     setFinalSummary('');
-    // Health checks first
-    const healthOk = await Promise.all(STEP_IDS.map(s => runServiceHealthStep(s)));
+    // Service health checks (skip 'devices' — handled by runDeviceStep).
+    const serviceIds = STEP_IDS.filter(s => s !== 'devices') as ServiceId[];
+    const healthOk = await Promise.all(serviceIds.map(s => runServiceHealthStep(s)));
     if (!healthOk.every(Boolean)) {
       setFinalSummary('Setup halted: one or more services unhealthy.');
       return;
     }
+    // Browser-side device probe (camera + mic) — non-fatal in Tauri/headless mode.
+    await runDeviceStep();
     // Real roundtrip tests
     const memOk = await runMemoryRoundtrip();
     const toolOk = await runToolStep();
@@ -410,8 +514,9 @@ export default function BootstrapWizard() {
     }
     const ttsUserOk = await runTtsStep();
     const audOk = true; // audiod doesn't expose a deeper test yet
+    const devOk = (stepState.devices.status === 'ok');
     setFinalSummary(
-      `Memory: ${memOk ? '✓' : '✗'} · Tools: ${toolOk ? '✓' : '✗'} · TTS-probe: ${ttsProbeOk ? '✓' : '✗'} · TTS-sample: ${ttsUserOk ? '✓' : '✗'} · Audio: ${audOk ? '✓' : '✗'}`,
+      `Memory: ${memOk ? '✓' : '✗'} · Tools: ${toolOk ? '✓' : '✗'} · TTS-probe: ${ttsProbeOk ? '✓' : '✗'} · TTS-sample: ${ttsUserOk ? '✓' : '✗'} · Audio: ${audOk ? '✓' : '✗'} · Devices: ${devOk ? '✓' : '✗'}`,
     );
   }
 
@@ -419,7 +524,7 @@ export default function BootstrapWizard() {
     audioRef.current?.play().catch(() => { /* user gesture required for autoplay on first run */ });
   }
 
-  const liveStatusList: ServiceId[] = STEP_IDS;
+  const liveStatusList: ServiceId[] = ALL_SERVICES as unknown as ServiceId[];
   const allStepsDone = STEP_IDS.every(s => stepState[s].status === 'ok' || stepState[s].status === 'fail');
 
   return (
@@ -506,10 +611,25 @@ export default function BootstrapWizard() {
               <div className="step-info">
                 <div className="step-label-row">
                   <span className="step-label">{idx + 1}. {svc}</span>
-                  <span className="step-port">:{PORTS[svc]}</span>
+                  {svc === 'devices' ? (
+                    <span className="step-port">mic+camera</span>
+                  ) : (
+                    <span className="step-port">:{PORTS[svc as ServiceId]}</span>
+                  )}
                 </div>
-                <span className="step-desc">{st.message}</span>
-                {st.detail && <span className="step-detail">{st.detail}</span>}
+                {svc === 'devices' && deviceProbe ? (
+                  <span className="step-detail">
+                    mic: {deviceProbe.microphones ? `${deviceProbe.micLevel.toFixed(3)} RMS` : 'none'}
+                    {' · '}
+                    {deviceProbe.cameras} camera{deviceProbe.cameras === 1 ? '' : 's'}
+                    {deviceProbe.micError ? ` · mic error: ${deviceProbe.micError}` : ''}
+                  </span>
+                ) : (
+                  <>
+                    <span className="step-desc">{st.message}</span>
+                    {st.detail && <span className="step-detail">{st.detail}</span>}
+                  </>
+                )}
               </div>
             </div>
           );

@@ -134,6 +134,27 @@ class PerceptionPipeline:
             description_log_lines_cap=int(log_cfg.get("lines_cap", 50000)),
             description_log_bytes_cap=int(log_cfg.get("bytes_cap", 50 * 1024 * 1024)),
         )
+        # v13.0: per-frame salience event log. Distinct from the
+        # description event bus: a frame_event fires every time the
+        # salience detector says "interesting" (with bboxes), even when
+        # the SceneGate suppresses the VLM. So frame_events is the raw
+        # stream of what the system saw, and descriptions is the
+        # curated stream of what the VLM actually described.
+        fe_cfg = config.get("frame_events", {}) or {}
+        fe_enabled = bool(fe_cfg.get("enabled", True))
+        from events import FrameEventLog, FrameEventBus
+        self.frame_event_log = FrameEventLog(
+            path=fe_cfg.get("path") if fe_enabled else None,
+            lines_cap=int(fe_cfg.get("lines_cap", 20000)),
+            bytes_cap=int(fe_cfg.get("bytes_cap", 20 * 1024 * 1024)),
+        )
+        # v13.0: in-process pub/sub for salient frame events. The
+        # durable log covers reconnect-after-restart; the bus covers
+        # the live SSE tail.
+        self.frame_event_bus = FrameEventBus()
+        self._frame_event_seq = 0
+        self._frame_events_published = 0
+        self._frame_events_dedup_skipped = 0
 
         # HTTP server (for health/status checks) - TCP on 8092 + Unix socket
         self.server = PerceptiondServer(
@@ -257,12 +278,23 @@ class PerceptionPipeline:
         if not result.salient and self._mode == "watchful":
             return  # Skip non-salient frames in watchful mode
 
+        # v13.0: every salient frame gets a frame_event, even when
+        # SceneGate suppresses the VLM. The "saw but didn't describe"
+        # case is exactly the information the operator needs to know
+        # the system is still alive. bboxes go on every event so the
+        # UI can paint the same overlay whether the VLM ran or not.
+        self._publish_frame_event(
+            result, status="pending"  # pending → will resolve to "described" or "skipped"
+        )
+
         # Scene gate: only run VLM when the scene has actually changed.
         # threshold=0.0 disables the gate (always run).
         if not self.scene_gate.should_run(result.motion_score):
             with self._lock:
                 self._scene_skips += 1
                 self._dedup_skip_count = self._scene_skips
+            with self._lock:
+                self._frame_events_dedup_skipped += 1
             return
 
         with self._lock:
@@ -271,6 +303,47 @@ class PerceptionPipeline:
         # Run VLM (carry bboxes through so the event and the thumbnail
         # are consistent with what the VLM was asked to describe).
         self._run_vlm(frame, result.bboxes)
+
+    def _publish_frame_event(self, result, status: str = "pending") -> None:
+        """v13.0: emit a frame-level salience event.
+
+        Status is informational:
+          - "pending"   — salience fired, VLM not yet decided
+          - "described" — VLM produced a description
+          - "skipped"   — SceneGate suppressed the VLM (no description)
+        """
+        if not hasattr(self, "_frame_event_seq"):
+            self._frame_event_seq = 0
+        if not hasattr(self, "_frame_events_published"):
+            self._frame_events_published = 0
+        if not hasattr(self, "_frame_events_dedup_skipped"):
+            self._frame_events_dedup_skipped = 0
+        with self._lock:
+            self._frame_event_seq += 1
+            feid = self._frame_event_seq
+        ev = {
+            "type": "frame_event",
+            "event_id": feid,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "trigger_kind": result.kind,
+            "motion_score": round(float(result.motion_score), 4),
+            "face_count": int(result.face_count),
+            "bboxes": result.bboxes or [],
+            "status": status,
+        }
+        try:
+            self.frame_event_log.submit(ev)
+            with self._lock:
+                self._frame_events_published += 1
+        except Exception as e:
+            print(f"perceptiond: frame_event_log submit error: {e}", flush=True)
+        # v13.0: live SSE tail. The bus is best-effort and never raises.
+        try:
+            fe_bus = getattr(self, "frame_event_bus", None)
+            if fe_bus is not None:
+                fe_bus.publish(ev)
+        except Exception as e:
+            print(f"perceptiond: frame_event_bus publish error: {e}", flush=True)
 
     def _encode_thumb(self, frame) -> "Optional[bytes]":
         """Encode a small JPEG thumbnail for the frame (used for /frames/<id>.jpg)."""
@@ -416,7 +489,23 @@ class PerceptionPipeline:
             base["description_log"] = self.publisher.description_log.stats() if self.publisher else {}
         except Exception:
             pass
+        # v13.0: frame_event stream (raw salience, pre-VLM)
+        try:
+            base["frame_event_log"] = self.frame_event_log.stats() if getattr(self, "frame_event_log", None) else {}
+        except Exception:
+            pass
+        try:
+            base["frame_event_bus"] = {
+                "subscribers": self.frame_event_bus.subscriber_count() if getattr(self, "frame_event_bus", None) else 0,
+                "ring_size": len(self.frame_event_bus) if getattr(self, "frame_event_bus", None) else 0,
+                "ring_cap": self.frame_event_bus._ring.maxlen if getattr(self, "frame_event_bus", None) else 0,
+            }
+        except Exception:
+            pass
+        base["frame_events_published"] = getattr(self, "_frame_events_published", 0)
+        base["frame_events_dedup_skipped"] = getattr(self, "_frame_events_dedup_skipped", 0)
         return base
+
 
     def get_detailed_status(self) -> dict:
         """v7.0 — get_status() augmented with scene-gate internals and

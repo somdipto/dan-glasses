@@ -135,6 +135,53 @@ pub struct PerceptionDescriptionLogStats {
     pub queue_depth: u64,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PerceptionFrameEventLogStats {
+    pub path: String,
+    pub lines: u64,
+    pub bytes: u64,
+    pub bytes_cap: u64,
+    pub lines_cap: u64,
+    pub truncated_count: u64,
+    pub first_event_id: u64,
+    pub last_event_id: u64,
+    pub first_ts: Option<String>,
+    pub last_ts: Option<String>,
+    pub writes: u64,
+    pub errors: u64,
+    pub enabled: bool,
+    pub queue_depth: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PerceptionFrameEventBusStats {
+    pub ring_size: u64,
+    pub ring_cap: u64,
+    pub subscriber_count: u64,
+    pub total_published: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PerceptionFrameEvent {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub event_id: u64,
+    pub timestamp: String,
+    pub trigger_kind: String,
+    pub motion_score: f64,
+    pub face_count: u64,
+    pub status: String,
+    #[serde(default)]
+    pub bboxes: Vec<PerceptionBBox>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PerceptionFrameEventsResponse {
+    pub count: u64,
+    pub events: Vec<PerceptionFrameEvent>,
+    pub cursor: serde_json::Value,
+}
+
 fn http_client(timeout_ms: u64) -> reqwest::Result<reqwest::Client> {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_millis(timeout_ms))
@@ -439,6 +486,75 @@ async fn perception_description_log_stats() -> Result<PerceptionDescriptionLogSt
         .map_err(|e| format!("parse: {e}"))
 }
 
+
+// v13.0 — frame-event log stats. /frame_events?count=N publishes
+// per-salient-frame events (motion/face trigger, motion_score, bboxes,
+// status: pending|described|skipped). The log is bounded by lines +
+// bytes caps; this exposes the on-disk state.
+#[tauri::command]
+async fn perception_frame_event_log_stats() -> Result<PerceptionFrameEventLogStats, String> {
+    let client = perceptiond_client().map_err(|e| format!("client: {e}"))?;
+    let resp = client
+        .get(format!("{PERCEPTIOND_URL}/status"))
+        .send()
+        .await
+        .map_err(|e| format!("request: {e}"))?;
+    let status: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("parse: {e}"))?;
+    let fe = status.get("frame_event_log").cloned();
+    let v = fe.unwrap_or(serde_json::json!({}));
+    serde_json::from_value::<PerceptionFrameEventLogStats>(v)
+        .map_err(|e| format!("decode: {e}"))
+}
+
+// v13.0 — frame-event bus stats. /status exposes `frame_event_bus`
+// (ring size, subscriber count, total_emitted).
+#[tauri::command]
+async fn perception_frame_event_bus_stats() -> Result<PerceptionFrameEventBusStats, String> {
+    let client = perceptiond_client().map_err(|e| format!("client: {e}"))?;
+    let resp = client
+        .get(format!("{PERCEPTIOND_URL}/status"))
+        .send()
+        .await
+        .map_err(|e| format!("request: {e}"))?;
+    let status: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("parse: {e}"))?;
+    let bus = status.get("frame_event_bus").cloned();
+    let v = bus.unwrap_or(serde_json::json!({
+        "ring_size": 0, "ring_cap": 0, "subscriber_count": 0, "total_published": 0
+    }));
+    serde_json::from_value::<PerceptionFrameEventBusStats>(v)
+        .map_err(|e| format!("decode: {e}"))
+}
+
+// v13.0 — fetch recent frame events. Mirrors the /frame_events HTTP
+// endpoint with the same cursor semantics (?count, ?since, ?since_ts).
+#[tauri::command]
+async fn perception_frame_events(
+    count: Option<u64>,
+    since: Option<u64>,
+    since_ts: Option<f64>,
+) -> Result<PerceptionFrameEventsResponse, String> {
+    let client = perceptiond_client().map_err(|e| format!("client: {e}"))?;
+    let mut params = Vec::new();
+    if let Some(c) = count { params.push(format!("count={c}")); }
+    if let Some(s) = since { params.push(format!("since={s}")); }
+    if let Some(t) = since_ts { params.push(format!("since_ts={t}")); }
+    let qs = if params.is_empty() { String::new() } else { format!("?{}", params.join("&")) };
+    let resp = client
+        .get(format!("{PERCEPTIOND_URL}/frame_events{qs}"))
+        .send()
+        .await
+        .map_err(|e| format!("request: {e}"))?;
+    resp.json::<PerceptionFrameEventsResponse>()
+        .await
+        .map_err(|e| format!("parse: {e}"))
+}
+
 // Viewfinder URL — the frontend uses this to build the <img src=...> for the
 // MJPEG /stream endpoint. Same as tauriApi.viewfinderUrl() in dev mode.
 #[tauri::command]
@@ -472,6 +588,9 @@ pub fn run() {
             perception_stream_url,
             perception_memory_stats,
             perception_description_log_stats,
+            perception_frame_event_log_stats,
+            perception_frame_event_bus_stats,
+            perception_frame_events,
             perception_frame_url,
         ])
         .run(tauri::generate_context!())

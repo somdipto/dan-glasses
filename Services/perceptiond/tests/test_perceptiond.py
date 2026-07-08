@@ -1559,8 +1559,6 @@ def test_descriptions_endpoint_since_ts():
         # Inject a DescriptionLog-backed ring so the publisher's recent()
         # surfaces the events. We bypass the publisher's normal ingest
         # path and write directly to the ring + log via publish().
-        from events import DescriptionEventBus  # noqa: F401  (silence unused)
-
         # Construct a tiny HTTP server that mirrors the since_ts branch.
         from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -1788,6 +1786,264 @@ def test_descriptions_endpoint_log_fallback():
 
 
 
+
+# v13.0 — frame-event log + bus: every salient frame (with bboxes) is recorded
+# even when the VLM is dedup-skipped, so the dashboard can answer "what did
+# you see at 14:00?" even when no description fired. Mirrors the v12.0
+# description-log surface (ring -> cold log + ?since/?since_ts/?count).
+
+
+def test_frame_event_log_basic_round_trip():
+    """FrameEventLog append + read() returns the events in insertion order."""
+    from events import FrameEventLog
+    import tempfile, os
+    with tempfile.TemporaryDirectory() as d:
+        log = FrameEventLog(path=os.path.join(d, "fe.log"), lines_cap=100, bytes_cap=1 << 20)
+        for i in range(5):
+            log.submit({
+                "type": "frame",
+                "event_id": i + 1,
+                "timestamp": _ts_iso_unix(1000.0 + i),
+                "image_id": f"img{i}",
+                "trigger_kind": "motion" if i % 2 else "face",
+                "bboxes": [{"x": 1, "y": 2, "w": 3, "h": 4, "kind": "motion"}] if i % 2 else [],
+                "motion_score": 0.1 * (i + 1),
+            })
+        time.sleep(0.4)  # worker drain
+        items = log.read()
+        log.close()
+        assert len(items) == 5, f"expected 5, got {len(items)}: {items}"
+        assert items[0]["event_id"] == 1
+        assert items[4]["trigger_kind"] == "face"  # i=4: i%2==0 -> face, no bboxes
+        print("  FrameEventLog round-trip: PASS")
+
+
+def test_frame_event_log_evicts_by_line_count():
+    """When the line cap is hit, oldest entries are evicted first."""
+    from events import FrameEventLog
+    import tempfile, os
+    with tempfile.TemporaryDirectory() as d:
+        log = FrameEventLog(path=os.path.join(d, "fe.log"), lines_cap=3, bytes_cap=1 << 20)
+        for i in range(5):
+            log.submit({"type": "frame", "event_id": i + 1, "timestamp": _ts_iso_unix(100.0 + i), "image_id": f"img{i}"})
+        time.sleep(0.4)
+        items = log.read()
+        log.close()
+        assert len(items) == 3, f"expected 3 (cap), got {len(items)}"
+        assert items[0]["event_id"] == 3, f"expected oldest kept=3, got {items[0]['event_id']}"
+        print("  FrameEventLog line eviction: PASS")
+
+
+def test_frame_event_log_since_unix():
+    """since_unix() returns events strictly newer than the given ts."""
+    from events import FrameEventLog
+    import tempfile, os
+    with tempfile.TemporaryDirectory() as d:
+        log = FrameEventLog(path=os.path.join(d, "fe.log"), lines_cap=10, bytes_cap=1 << 20)
+        for i in range(5):
+            log.submit({"type": "frame", "event_id": i + 1, "timestamp": _ts_iso_unix(2000.0 + i * 10.0)})
+        time.sleep(0.3)
+        items = log.since_unix(2015.0)
+        log.close()
+        eids = [x["event_id"] for x in items]
+        assert eids == [3, 4, 5], f"expected [3,4,5], got {eids}"
+        print("  FrameEventLog since_unix: PASS")
+
+
+def test_frame_event_bus_fanout():
+    """FrameEventBus.publish() fans out to every attached subscriber, in order."""
+    from events import FrameEventBus
+    bus = FrameEventBus(replay=2, per_subscriber_cap=10)
+    q1, _ = bus.attach()
+    q2, _ = bus.attach()
+    bus.publish({"event_id": 1, "x": 1})
+    bus.publish({"event_id": 2, "x": 2})
+    a = [q1.popleft()["event_id"], q1.popleft()["event_id"]]
+    b = [q2.popleft()["event_id"], q2.popleft()["event_id"]]
+    bus.detach(q1); bus.detach(q2)
+    assert a == [1, 2] and b == [1, 2], f"a={a} b={b}"
+    assert bus.subscriber_count() == 0
+    print("  FrameEventBus fanout: PASS")
+
+
+def test_frame_event_bus_drops_oldest_when_full():
+    """Bounded per-subscriber queue: oldest entry is dropped, not blocked."""
+    from events import FrameEventBus
+    bus = FrameEventBus(replay=0, per_subscriber_cap=2)
+    q, _ = bus.attach()
+    for i in range(5):
+        bus.publish({"event_id": i})
+    seen = [q.popleft()["event_id"] for _ in range(2)]
+    bus.detach(q)
+    assert seen == [3, 4], f"expected latest 2 [3,4], got {seen}"
+    print("  FrameEventBus overflow: PASS")
+
+
+def test_pipeline_emits_frame_events():
+    """PerceptionPipeline._on_frame publishes a frame event when salient=True
+    (regardless of dedup), so the dashboard sees everything seen."""
+    import types
+    # Build a minimal pipeline stub: skip the constructor's heavy
+    # dependencies and just exercise _on_frame.
+    from perceptiond import PerceptionPipeline
+    p = PerceptionPipeline.__new__(PerceptionPipeline)
+    p._lock = threading.Lock()
+    p._mode = "watchful"
+    p._vlm_busy = False
+    p._vlm_queue_depth = 0
+    p._frames_processed = 0
+    p._salient_frames = 0
+    p._descriptions = 0
+    p._scene_skips = 0
+    p._vlm_invocations = 0
+    p._deduped_count = 0
+    p._dedup_skip_count = 0
+    p._last_motion_score = 0.0
+    p._last_face_count = 0
+    p._last_trigger_kind = "none"
+    p.MAX_QUEUE_DEPTH = 1
+    # Wire a fake salience + scene gate + frame_store + vlm + publisher.
+    class FakeResult:
+        salient = True
+        kind = "motion"
+        motion_score = 0.5
+        face_count = 0
+        bboxes = [{"x": 1, "y": 2, "w": 3, "h": 4, "kind": "motion"}]
+    p.salience = types.SimpleNamespace(evaluate=lambda f: FakeResult())
+    p.scene_gate = types.SimpleNamespace(should_run=lambda s: False, threshold=0.02)
+    p.frame_store = types.SimpleNamespace(put=lambda *a, **k: None)
+    p.vlm = types.SimpleNamespace(describe=lambda f: "ignored")
+    # FrameEventLog stub that captures submissions.
+    captured = []
+    class FakeFEL:
+        def submit(self, ev): captured.append(dict(ev))
+        def stats(self): return {"writes": len(captured)}
+    class FakeFEB:
+        def publish(self, ev): pass
+        def subscriber_count(self): return 0
+    p.frame_event_log = FakeFEL()
+    p.frame_event_bus = FakeFEB()
+    # Call _on_frame with a 64x64 white frame.
+    import numpy as np
+    frame = np.zeros((64, 64, 3), dtype=np.uint8)
+    p._on_frame(frame)
+    assert p._salient_frames == 1, f"salient_frames should be 1, got {p._salient_frames}"
+    assert p._scene_skips == 1, f"scene_skips should be 1, got {p._scene_skips}"
+    assert len(captured) == 1, f"expected 1 frame event, got {len(captured)}"
+    assert captured[0]["trigger_kind"] == "motion"
+    assert captured[0]["bboxes"][0]["kind"] == "motion"
+    assert captured[0]["event_id"] == 1
+    print("  Pipeline emits frame events (salient+dedup_skip): PASS")
+
+
+def test_pipeline_emits_frame_event_on_vlm_path():
+    """When dedup lets the frame through, a frame event is still emitted
+    (with the same image_id the description event will carry)."""
+    import types
+    from perceptiond import PerceptionPipeline
+    p = PerceptionPipeline.__new__(PerceptionPipeline)
+    p._lock = threading.Lock()
+    p._mode = "watchful"
+    p._vlm_busy = False
+    p._vlm_queue_depth = 0
+    p._frames_processed = 0
+    p._salient_frames = 0
+    p._descriptions = 0
+    p._scene_skips = 0
+    p._vlm_invocations = 0
+    p._deduped_count = 0
+    p._dedup_skip_count = 0
+    p._last_motion_score = 0.0
+    p._last_face_count = 0
+    p._last_trigger_kind = "motion"
+    p.MAX_QUEUE_DEPTH = 1
+    class FakeResult:
+        salient = True
+        kind = "motion"
+        motion_score = 0.7
+        face_count = 0
+        bboxes = []
+    p.salience = types.SimpleNamespace(evaluate=lambda f: FakeResult())
+    p.scene_gate = types.SimpleNamespace(should_run=lambda s: True, threshold=0.02)
+    # Capture which frame_id _run_vlm sees.
+    seen = {}
+    p.frame_store = types.SimpleNamespace(put=lambda *a, **k: None)
+    p.vlm = types.SimpleNamespace(describe=lambda f: "fake description")
+    # Stub publisher so we don't actually fire VLM.
+    class FakePub:
+        def publish(self, ev): seen["published"] = ev
+    p.publisher = FakePub()
+    p.frame_event_log = types.SimpleNamespace(submit=lambda ev: seen.setdefault("frame", ev), stats=lambda: {})
+    p.frame_event_bus = types.SimpleNamespace(publish=lambda ev: None, subscriber_count=lambda: 0)
+    # Replace _run_vlm to capture the bboxes it's called with — we want to
+    # assert the frame event was already emitted *before* VLM.
+    def fake_run_vlm(frame, bboxes):
+        seen["vlm_bboxes"] = bboxes
+    p._run_vlm = fake_run_vlm
+    import numpy as np
+    frame = np.zeros((64, 64, 3), dtype=np.uint8)
+    p._on_frame(frame)
+    assert "frame" in seen, f"frame event was not emitted: {seen}"
+    assert seen["frame"]["trigger_kind"] == "motion"
+    print("  Pipeline emits frame event (VLM path): PASS")
+
+
+def test_frame_events_endpoint_basic():
+    """/frame_events returns the recent events with cursor block."""
+    import types
+    from events import FrameEventBus, FrameEventLog
+    import tempfile, os
+    with tempfile.TemporaryDirectory() as d:
+        log = FrameEventLog(path=os.path.join(d, "fe.log"), lines_cap=50, bytes_cap=1 << 20)
+        bus = FrameEventBus(replay=0, per_subscriber_cap=10)
+        for i in range(3):
+            ev = {"type": "frame", "event_id": i + 1, "timestamp": _ts_iso_unix(3000.0 + i)}
+            log.submit(ev)
+            bus.publish(ev)
+        time.sleep(0.3)
+        # Spin a tiny HTTP server like the description test.
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        captured = {}
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a, **k): pass
+            def do_GET(self):
+                from urllib.parse import urlparse, parse_qs
+                u = urlparse(self.path)
+                qs = parse_qs(u.query)
+                if u.path != "/frame_events":
+                    self.send_response(404); self.end_headers(); return
+                count = int(qs.get("count", ["20"])[0])
+                items = log.recent(count)
+                cursor = {
+                    "ring_size": len(bus._subscribers) and 0,  # not meaningful here
+                    "log": log.stats(),
+                    "source": "ring" if items else "log",
+                    "requested_count": count,
+                }
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "count": len(items),
+                    "events": items,
+                    "cursor": cursor,
+                }).encode("utf-8"))
+        srv = HTTPServer(("127.0.0.1", 0), H)
+        port = srv.server_address[1]
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        try:
+            import urllib.request
+            resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/frame_events?count=2", timeout=2).read()
+            body = json.loads(resp)
+            assert body["count"] == 2, f"expected count=2, got {body}"
+            assert body["events"][0]["event_id"] == 2
+            assert body["cursor"]["log"]["lines"] >= 3
+        finally:
+            srv.shutdown(); srv.server_close()
+            log.close()
+        print("  /frame_events endpoint: PASS")
+
 def main():
     print("\n=== perceptiond tests ===")
 
@@ -1856,6 +2112,15 @@ def main():
         ("publisher_wires_description_log", test_publisher_wires_description_log),
         ("publisher_since_falls_back_to_log", test_publisher_since_falls_back_to_log),
         ("descriptions_endpoint_log_fallback", test_descriptions_endpoint_log_fallback),
+        # v13.0 — frame-event log + bus
+        ("frame_event_log_basic_round_trip", test_frame_event_log_basic_round_trip),
+        ("frame_event_log_evicts_by_line_count", test_frame_event_log_evicts_by_line_count),
+        ("frame_event_log_since_unix", test_frame_event_log_since_unix),
+        ("frame_event_bus_fanout", test_frame_event_bus_fanout),
+        ("frame_event_bus_drops_oldest_when_full", test_frame_event_bus_drops_oldest_when_full),
+        ("pipeline_emits_frame_events", test_pipeline_emits_frame_events),
+        ("pipeline_emits_frame_event_on_vlm_path", test_pipeline_emits_frame_event_on_vlm_path),
+        ("frame_events_endpoint_basic", test_frame_events_endpoint_basic),
     ]
 
     passed = 0

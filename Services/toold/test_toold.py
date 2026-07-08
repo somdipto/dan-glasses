@@ -230,5 +230,44 @@ async def test_exec_with_tool_disabled_rejected():
         await c.post("/registry/test_register_echo/enable")
 
 
+@pytest.mark.asyncio
+async def test_exec_shell_chained_and():
+    """Chained commands with && must be allowed (LLM multi-step shell)."""
+    async with httpx.AsyncClient(base_url=BASE_URL, timeout=60) as c:
+        r = await c.post("/exec", json={"command": "echo first && echo second", "timeout": 10})
+        assert r.status_code == 200
+        data = r.json()
+        assert data["success"] is True
+        assert "first" in data["stdout"] and "second" in data["stdout"]
+
+
+@pytest.mark.asyncio
+async def test_exec_shell_chained_or():
+    """Chained commands with || must be allowed."""
+    async with httpx.AsyncClient(base_url=BASE_URL, timeout=60) as c:
+        r = await c.post("/exec", json={"command": "false || echo fallback-works", "timeout": 10})
+        assert r.status_code == 200
+        data = r.json()
+        assert data["success"] is True
+        assert "fallback-works" in data["stdout"]
+
+
+@pytest.mark.asyncio
+async def test_exec_shell_injection_still_blocked():
+    """Real injection vectors (pipe, semicolon, redirect, backtick, $()) must still be rejected."""
+    blocked_payloads = [
+        "echo hi | cat",
+        "echo hi; rm -rf /",
+        "echo hi > /tmp/x",
+        "echo $(id)",
+        "echo `id`",
+        "echo hi\nls",
+    ]
+    async with httpx.AsyncClient(base_url=BASE_URL, timeout=60) as c:
+        for cmd in blocked_payloads:
+            r = await c.post("/exec", json={"command": cmd, "timeout": 5})
+            assert r.status_code == 400, f"should have rejected: {cmd!r} got {r.status_code} {r.text}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

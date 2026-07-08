@@ -60,3 +60,16 @@ description_log:
 frame_store:
   image_dir: /home/workspace/.cache/dan-glasses/perceptiond/frames
   max_bytes: 209715200  # 200 MiB
+
+# v13.0 — salient frame event stream.
+# Every frame that triggers salience (motion, face, or both) emits a
+# "frame_event" to this log. Bounded by lines_cap + bytes_cap. Distinct
+# from description_log: description_log = what the VLM said;
+# frame_event_log = what the system SAW (raw salience, pre-VLM, including
+# frames the SceneGate dedup-skipped). Off by default (enabled: false)
+# to avoid double-counting with the description stream on the dashboard.
+frame_events:
+  enabled: true
+  path: /home/workspace/.cache/dan-glasses/perceptiond/frame_events.log
+  lines_cap: 20000                # ~55 hours at 1 event / 10s
+  bytes_cap: 20971520             # 20 MiB
