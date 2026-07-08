@@ -6,13 +6,15 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 import aiosqlite
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from sentence_transformers import SentenceTransformer
 import numpy as np
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 logging.basicConfig(level=logging.INFO, format="[memoryd] %(message)s")
 log = logging.getLogger("memoryd")
@@ -24,7 +26,7 @@ MODEL_NAME = os.getenv("MEMORYD_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
 DIM = 384
 VALID_TYPES = ("episodic", "semantic", "procedural")
 
-_model: Optional[SentenceTransformer] = None
+_model: Optional["SentenceTransformer"] = None
 _model_lock = asyncio.Lock()
 _model_ready = asyncio.Event()
 
@@ -62,9 +64,18 @@ async def init_db() -> None:
     log.info("db ready at %s", DB_PATH)
 
 
-def load_model_blocking() -> SentenceTransformer:
-    """Synchronous model load. Runs in a thread so the event loop is free."""
+def load_model_blocking() -> "SentenceTransformer":
+    """Synchronous model load. Runs in a thread so the event loop is free.
+
+    v132: Import sentence_transformers lazily here, not at module top.
+    Importing st at module top pulls in torch + transformers + sklearn + scipy,
+    costing 25-40s on cold start. That's longer than supervisor's startsecs=5,
+    so memoryd would crashloop with the model never loaded. By deferring the
+    import to this thread, the FastAPI app binds 8741 in <1s; model load runs
+    in the background and /ready gates on it.
+    """
     global _model
+    from sentence_transformers import SentenceTransformer
     log.info("loading embedding model: %s", MODEL_NAME)
     m = SentenceTransformer(MODEL_NAME)
     log.info("model loaded — dim=%d", m.get_sentence_embedding_dimension())
@@ -116,7 +127,7 @@ class EmbeddingRequest(BaseModel):
     model: Optional[str] = None
 
 
-async def _ensure_model() -> SentenceTransformer:
+async def _ensure_model() -> "SentenceTransformer":
     """v130 (Option C): Wait for the model to finish loading, up to 180s.
 
     Boot window on cold start is ~25s but with model pre-loading under memory
