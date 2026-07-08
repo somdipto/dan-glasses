@@ -9,5 +9,6 @@ from .perceptiond import (
     SceneGate,
 )
 
+__version__ = "13.1.0"
 
-__all__ = ["PerceptionPipeline", "SceneGate"]
+__all__ = ["PerceptionPipeline", "SceneGate", "__version__"]

@@ -583,3 +583,27 @@ Brief re-fires identical to v1.0. State still v1.6 build previously shipped.
 - `GET /status` → running=true, vad_ready, whisper binary+model OK, ptt_enabled false, no dropped, 0 in-flight, ws_port 8091
 
 8/8 brief deliverables present and verified (directory, SPEC.md v1.6, ALSA capture, Silero VAD, whisper.cpp, PTT, tests 177/2-skip, Tauri/React app integration). No new work. Idle.
+
+## Re-run verification @ 2026-07-08 22:15 IST (DAN-2 scheduled fire, this run)
+
+Brief re-fires identical to v1.0 build. State still v1.6 (the audiod build shipped weeks ago).
+
+**Live check:**
+- `python3 audiod.py --port 8090` PID 90, uptime 8.2s
+- `0.0.0.0:8090` LISTEN
+- `GET /health` → 200 `{status:ok, readiness:{vad:true, whisper_binary:true, whisper_model:true, publisher:true, running:true}}`
+- `GET /status` → running, vad_ready, device=default, 16kHz mono, model=`ggml-base.bin`, ptt off, ws_port 8091, 0 in-flight, 0 dropped
+
+**Tests:** 177 passed, 2 skipped in 84.79s (20 test files). Zero failures, zero flakes on this run.
+
+**Deliverables verified (8/8):**
+1. `Services/audiod/` directory structure — 7 modules + 20 test files
+2. `SPEC.md` v1.6 — full architecture, threading model, public API
+3. ALSA capture — `capture.py` (libasound ctypes)
+4. Silero VAD — `vad.py` (ONNX Runtime, 512-sample @ 16kHz)
+5. whisper.cpp — `transcription.py` (`whisper-cli` + JSON sidecar)
+6. PTT — `ptt.py` (evdev on Linux, polling fallback)
+7. Tests — 177/2-skip green
+8. Tauri app integration — `server.py` proxies `/api/audiod/*` to `:8090` + WS upgrade `:8091`; `LiveTranscript.tsx` consumes stream
+
+No new work. Idle. Next trigger should land a new spec to unblock v1.7 work (HRM-Text post-processor, SIA-W+H port, language auto-detect, vad-threshold hot-reload, per-segment Loki push).

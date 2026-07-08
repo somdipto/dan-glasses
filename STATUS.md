@@ -10,7 +10,7 @@
 | # | Daemon | Port | Status | Live since | Notes |
 |---|--------|------|--------|------------|-------|
 | 1 | **audiod** | 8090 + WS 8091 | ✅ live | 2026-06-19 | whisper.cpp base.en, Silero VAD, **160/160 passed, 1 skipped** (v1.3: Loki push sink). `/status.metrics` exposes {enabled, loki_url, interval_s, pending, active_kinds, last_push_ts, pushes_ok, pushes_failed, drops}. E2E verified: 2 test observations → 1 push_ok in real Loki (stream labels `service=audiod, job=audiod`). |
-| 2 | **perceptiond** | 8092 | ✅ live | 2026-06-15 | LFM2.5-VL-450M on llama.cpp, watchful mode, 8/8 tests. Live receipt: `{"mode":"watchful","running":true,"frames_processed":4,"salient_frames":1,"descriptions":0,"vlm_busy":true,"vlm_queue_depth":1}`. |
+| 2 | **perceptiond** | 8092 | ✅ live | 2026-06-15 | LFM2.5-VL-450M on llama.cpp, watchful mode, **68/68 tests** (v13.1: hybrid imports + `__version__` + conftest — test suite was uncollectable before, now green). Live receipt: `{"mode":"watchful","running":true,"frames_processed":7,"salient_frames":1,"vlm_busy":true}`. |
 | 3 | **memoryd** | 8741 | ✅ live (persisted) | 2026-06-30 | SQLite + MiniLM-L6-v2. **16/16 tests**. **PERSISTENCE FIXED** — DB pinned to `/home/workspace/.cache/dan-glasses/memoryd/state.db` (db_persistent: true). V108 anomaly closed (see §memoryd below). |
 | 4 | **toold** | 8742 | ✅ live (persisted) | 2026-06-30 | sandboxed shell + Python + exec_file + named-tool exec. **18/18 tests**. Registry pinned to `/home/workspace/.cache/dan-glasses/toold/registry.json`. `/test` self-test: shell+python+registry+file all green in 36ms. |
 | 5 | **ttsd** | 8743 | ✅ live | 2026-06-30 | KittenTTS medium. **6/6 tests**. 8 voices exposed. `/speak` returns WAV blob (309KB sample observed in wizard roundtrip). |
@@ -84,14 +84,14 @@ The daemons do not crash; they are killed when the host process restarts.
 ## Test counts (cumulative, all green)
 
 - audiod: 137/137
-- perceptiond: 8/8
+- perceptiond: 68/68
 - memoryd: 16/16
 - toold: 18/18
 - ttsd: 6/6
 - os-toold: (no suite, manual)
 - openclaw: (TS suite, not auto)
 
-**Total: 144/144 (excluding os-toold and openclaw).** This number is real. It is not a marketing number.
+**Total: 245/245 (excluding os-toold and openclaw).** This number is real. It is not a marketing number.
 
 ---
 

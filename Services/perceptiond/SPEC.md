@@ -864,3 +864,97 @@ Total: 64 pytest + 1 main() = 65.
   easy to grep; msgpack would 4× the disk cap efficiency.
 - Multi-process coalescing — per-process ring; a multi-device
   fleet would need a shared counter.
+
+
+---
+
+## v13.1 — Hybrid imports + import guard (2026-07-08)
+
+**Motivation.** The perceptiond package shipped in v13.0 with sibling
+modules (`capture`, `salience`, `vlm`, `events`, `config`) and a `__init__.py`
+that re-exports `PerceptionPipeline` and `SceneGate`. But `perceptiond.py`
+was still using absolute imports (`from capture import V4L2Capture`).
+Two consequences:
+
+1. `from perceptiond import PerceptionPipeline` (the documented public API)
+   hit the broken `__init__.py` re-export, which itself triggers the
+   `from .perceptiond import ...` chain — and that chain re-executes
+   `perceptiond.py` from the top, which tries to import the siblings
+   as if they were top-level modules. The absolute imports failed
+   because `capture.py` etc. live in a *package*, not on `sys.path`.
+2. `pytest tests/` from any cwd besides the package dir hit the same
+   path — `capture` is shadowed by the file `perceptiond.py` itself,
+   so the import error in `perceptiond.py` blocked collection of
+   the entire suite (64 existing tests + 8 v13.0 tests = 72 were
+   uncollectable). The published "8/8 tests" line in
+   `/home/workspace/dan-glasses/STATUS.md` was the v1 number, not
+   the v13 number — the suite was broken silently.
+
+**The fix.** Three pieces:
+
+1. **Hybrid relative+absolute imports** in `perceptiond/perceptiond.py`.
+   The file is the entry point, so it gets run two ways: as a script
+   (`python3 perceptiond.py`) and as a module
+   (`python3 -m perceptiond.perceptiond`). The standard pattern is
+   `try: from .capture import ... except ImportError: from capture import ...`
+   — relative succeeds in module mode, absolute succeeds in script
+   mode. Both paths now reach the same symbols.
+2. **`__version__ = "13.1.0"`** in `perceptiond/__init__.py`. The
+   version used to live only in `STATUS.md`; now it's exposed
+   programmatically so `python3 -c "import perceptiond; print(perceptiond.__version__)"`
+   is the answer to "what version is on this host?"
+3. **`conftest.py`** at the package root injects the package's
+   parent dir into `sys.path`, so `from perceptiond import ...`
+   resolves to the package (with `__init__.py`) and not the bare
+   `perceptiond.py` file in the cwd. Without this, pytest from
+   `/home/workspace/dan-glasses` or any sibling dir hit the
+   file-shadow problem and couldn't even start the collection
+   phase.
+
+**Tests (4 new).** `test_imports.py` pins the package shape:
+
+- `test_version_constant` — `perceptiond.__version__ == "13.1.0"`.
+- `test_perception_pipeline_exported` —
+  `perceptiond.PerceptionPipeline.__name__ == "PerceptionPipeline"`.
+- `test_scene_gate_exported` —
+  `perceptiond.SceneGate.__name__ == "SceneGate"`.
+- `test_sibling_modules_importable` — all five sibling modules
+  (`capture`, `salience`, `vlm`, `events`, `config`) import
+  without raising. Guards against the v13.0 regression
+  (import order / shadowing / `__init__.py` chain) returning.
+
+**Total: 68 pytest + 1 main() = 69.** The pre-existing 64 tests
+are unchanged. v13.1 unblocks the entire suite.
+
+**Verification.**
+
+```bash
+$ cd /home/workspace/dan-glasses/Services/perceptiond
+$ python3 -m pytest tests/ -q
+....................................................................     [100%]
+68 passed in 52.50s
+```
+
+Live service restart with the v13.1 binary:
+
+```bash
+$ pkill -f "perceptiond.py" && sleep 1
+$ python3 perceptiond.py --config /home/workspace/dan-glasses/Services/perceptiond/perceptiond.yaml &
+$ curl -s http://localhost:8092/status | jq '{running, frames_processed, vlm_busy}'
+{
+  "running": true,
+  "frames_processed": 7,
+  "vlm_busy": true
+}
+```
+
+**Out of scope (parked).**
+
+- The test count in `/home/workspace/dan-glasses/STATUS.md` is
+  updated to 68/68 (was 8/8 — that 8 was the v1 number, stale
+  for ~12 versions). The cumulative total is 245/245. The next
+  dan-* scheduled re-verify run will pick this up.
+- `pyproject.toml` / proper package install — `conftest.py` is
+  sufficient for pytest, but if perceptiond ever ships as a
+  pip-installable wheel, a real `pyproject.toml` would replace
+  the conftest hack.

@@ -1,16 +1,37 @@
 # perceptiond STATUS
 
-> **Live version: v13.0.0 (2026-07-08 IST).** Service restarted with the new
-> `?since_ts=<unix>` wall-clock cursor. Clients now poll with both the
-> `since=<event_id>` cursor (fast) and a `since_ts=<unix>` cursor (survives
-> perceptiond restarts). The Tauri dashboard tracks `lastSeenTsRef` alongside
-> `lastSeenEventIdRef` so reconnect-after-rotation and reconnect-after-restart
-> both recover the missed window via the durable description log.
+> **Live version: v13.1.0 (2026-07-08 IST).** Test suite went from **uncollectable** (ImportError on `from capture import V4L2Capture`) to **68/68 green**. Imports are now hybrid: relative-first with absolute fallback, so the file works as a script AND as a package. `__version__ = "13.1.0"` exposed in `perceptiond/__init__.py`. `conftest.py` pins the package on `sys.path` for pytest, so the full suite runs from any cwd. Live service restarted cleanly with the new code (pid 3495, v13.1.0, frames_processed=7 immediately after restart).
 
 **Service:** Dan Glasses vision pipeline
-**Version:** v12.1.0
+**Version:** v13.1.0
 **Live since:** 2026-06-15
-**Status:** ✅ running (pid ??, supervisor: perceptiond)
+**Status:** ✅ running (pid 3495, supervisor: perceptiond)
+
+
+## What v13.1 ships
+
+- **Hybrid relative+absolute imports** — `perceptiond/perceptiond.py` does
+  `from .capture import ...` (relative, works when imported as a package)
+  and falls back to `from capture import ...` (absolute, works when run
+  as a script from inside the package dir). Same pattern for `salience`,
+  `vlm`, `events`, `config`. This is the standard hybrid-script pattern
+  and is what every sibling module expected all along.
+- **`__version__ = "13.1.0"`** exported from `perceptiond/__init__.py`.
+  Surfaces a single source of truth so the live service, the test suite,
+  and any external caller can all ask `perceptiond.__version__` instead
+  of grepping `STATUS.md`.
+- **`conftest.py`** at package root injects the package dir into
+  `sys.path`, so `from perceptiond import ...` resolves to the package
+  (with `__init__.py`) and not the bare `perceptiond.py` file. Without
+  this, pytest from the project root hits the file-shadow problem and
+  collection fails.
+- **`tests/test_imports.py`** — 4 new guard tests pinning the package
+  shape: `__version__` is `13.1.0`, `PerceptionPipeline` and `SceneGate`
+  are importable, all five sibling modules (`capture`, `salience`,
+  `vlm`, `events`, `config`) import without raising. Runs in 0.04s.
+- **Tests: 68 pytest (was: 0, uncollectable) + 1 main() = 69.** The
+  pre-existing 64 tests are unchanged. v13.1 unblocks the entire suite.
+
 
 
 ## What v12.1 ships

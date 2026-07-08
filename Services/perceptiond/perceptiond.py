@@ -5,23 +5,34 @@ Camera → V4L2 capture → motion salience → [if salient] → VLM (llama.cpp)
 """
 
 import sys
+import os
 import time
 import uuid
 import signal
 import argparse
 import threading
 import json
-import os
 from collections import deque
 from pathlib import Path
 from typing import Optional
 import numpy as np
 
-from capture import V4L2Capture
-from salience import SalienceDetector
-from vlm import VLMInference
-from events import DescriptionPublisher, FrameStore, PerceptiondServer
-from config import load_config
+# v13.1: support both `python3 perceptiond.py` (script, cwd on sys.path)
+# and `python3 -m perceptiond.perceptiond` (module, package on sys.path).
+# Try package-relative first; fall back to absolute (script-style) so the
+# module is collectable by tests yet still launchable as a script.
+try:
+    from .capture import V4L2Capture
+    from .salience import SalienceDetector
+    from .vlm import VLMInference
+    from .events import DescriptionPublisher, FrameStore, PerceptiondServer
+    from .config import load_config
+except ImportError:
+    from capture import V4L2Capture
+    from salience import SalienceDetector
+    from vlm import VLMInference
+    from events import DescriptionPublisher, FrameStore, PerceptiondServer
+    from config import load_config
 
 
 class SceneGate:
