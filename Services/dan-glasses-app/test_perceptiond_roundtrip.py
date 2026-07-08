@@ -17,6 +17,7 @@ Run:
 import io
 import json
 import os
+import select
 import socket
 import sys
 import time
@@ -73,7 +74,16 @@ def _drive(handler_cls, method, path, body=b"", headers=None):
 
     srv_sock.close()
     chunks = []
+    deadline = time.time() + 2.0
+    content_length = None
+    head_parsed = False
     while True:
+        timeout = deadline - time.time()
+        if timeout <= 0:
+            break
+        r, _, _ = select.select([cli], [], [], timeout)
+        if not r:
+            break
         try:
             chunk = cli.recv(65536)
         except OSError:
@@ -81,6 +91,22 @@ def _drive(handler_cls, method, path, body=b"", headers=None):
         if not chunk:
             break
         chunks.append(chunk)
+        data = b"".join(chunks)
+        if not head_parsed and b"\r\n\r\n" in data:
+            raw_head = data.split(b"\r\n\r\n", 1)[0]
+            for line in raw_head.split(b"\r\n")[1:]:
+                if b":" in line:
+                    k, _, v = line.partition(b":")
+                    if k.decode().strip().lower() == "content-length":
+                        try:
+                            content_length = int(v.decode().strip())
+                        except ValueError:
+                            pass
+            head_parsed = True
+        if content_length is not None and head_parsed:
+            hdr_end = data.find(b"\r\n\r\n") + 4
+            if len(data) - hdr_end >= content_length:
+                break
     cli.close()
     raw = b"".join(chunks)
     if b"\r\n\r\n" not in raw:

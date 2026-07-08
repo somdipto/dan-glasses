@@ -4,6 +4,7 @@ import asyncio
 import os
 import sys
 import tempfile
+import time
 import pytest
 import httpx
 
@@ -30,7 +31,19 @@ async def client(setup_env):
 
 @pytest.mark.asyncio
 async def test_health():
-    async with httpx.AsyncClient(base_url=BASE_URL, timeout=60) as c:
+    # /ready polls model load completion; tolerate up to 180s while the
+    # embedding model warms. The live service can be in "loading" on a cold
+    # boot, so we wait for /ready before asserting on /health status.
+    async with httpx.AsyncClient(base_url=BASE_URL, timeout=200) as c:
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            r = await c.get("/ready")
+            if r.status_code == 200 and r.json().get("ready") is True:
+                break
+            await asyncio.sleep(1.0)
+        else:
+            pytest.fail("memoryd did not become ready within 180s")
+
         r = await c.get("/health")
         assert r.status_code == 200
         data = r.json()

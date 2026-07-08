@@ -23,6 +23,14 @@ PROXY_HOST = os.environ.get("PROXY_HOST", "127.0.0.1")
 PROXY_PORT = int(os.environ.get("PROXY_PORT", "8747"))
 
 
+def _audiod_ws_listening(host="127.0.0.1", port=8091, timeout=0.5):
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 def _server_reachable(host, port, timeout=1.0):
     try:
         with socket.create_connection((host, port), timeout=timeout):
@@ -100,6 +108,10 @@ def _read_one_frame(sock, timeout=3.0):
 @unittest.skipUnless(
     _server_reachable(PROXY_HOST, PROXY_PORT),
     f"dan-glasses-app not reachable at {PROXY_HOST}:{PROXY_PORT}",
+)
+@unittest.skipUnless(
+    _audiod_ws_listening(),
+    "audiod WS server not listening on :8091 (publish.mode != websocket/both)",
 )
 class TestWsUpgrade(unittest.TestCase):
     def test_handshake_returns_101(self):
