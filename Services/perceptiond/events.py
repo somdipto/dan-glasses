@@ -12,8 +12,9 @@ import http.server
 import socketserver
 import time
 import uuid
+import queue
 from collections import deque
-from typing import Optional, List, Deque
+from typing import Optional, List, Deque, Tuple
 from urllib import request as _urlrequest
 from urllib.error import URLError, HTTPError
 
@@ -28,6 +29,14 @@ EVENT_BUS_PER_SUBSCRIBER = 64 # per-subscriber bounded queue (overwrite-on-full)
 # v8.0 — memoryd ingest hook
 MEMORY_SINK_QUEUE_CAP = 256   # bounded cross-daemon queue (overwrite-on-full)
 MEMORY_SINK_TIMEOUT = 2.0     # per-request HTTP timeout (seconds) — tight, daemon must stay live
+
+# v12.0 — persistent description log (JSONL)
+# Bounded cold-tier backstop for /descriptions?since=<id>. Lines cap
+# is the source of truth (worst-case row count); bytes cap is a
+# safety net for large descriptions.
+DESCRIPTION_LOG_DEFAULT_LINES_CAP = 50_000   # ~30 days at 1/min
+DESCRIPTION_LOG_DEFAULT_BYTES_CAP = 50 * 1024 * 1024  # 50 MiB
+DESCRIPTION_LOG_DEFAULT_PATH = "~/.cache/dan-glasses/perceptiond/descriptions.log"
 
 
 class MemorySink:
@@ -184,6 +193,322 @@ class EventBus:
     def subscriber_count(self) -> int:
         with self._lock:
             return len(self._subscribers)
+
+
+# v12.0 — persistent description log
+DESCRIPTION_LOG_DEFAULT_LINES_CAP = 50_000
+DESCRIPTION_LOG_DEFAULT_BYTES_CAP = 50 * 1024 * 1024  # 50 MiB
+
+
+class DescriptionLog:
+    """v12.0 — durable, append-only JSONL description log.
+
+    Provides a cold-tier backstop for `/descriptions?since=<id>` so a
+    reconnecting client can replay missed events beyond the in-memory
+    ring (200 cap). Bounded by line count and byte count; oldest lines
+    are evicted first (insertion-order, same convention as the in-memory
+    ring).
+
+    The log is **append-only by interface** — `submit()` is fire-and-
+    forget (queues to a background worker) so the publish hot path is
+    never blocked on disk I/O. `read()` is the synchronous backfill API
+    used by the HTTP handler.
+
+    Thread-safety:
+    - `submit()` puts onto a `queue.Queue`; a single worker thread
+      drains and appends to disk.
+    - `read()` takes a per-call `threading.Lock` (cheap; only used by
+      the HTTP handler) so a long `read()` does not race a concurrent
+      `close()`.
+    - `close()` enqueues a `None` sentinel and joins the worker. Safe
+      to call from any thread.
+
+    Failure mode:
+    - Disk I/O errors are caught, counted in `stats()["errors"]`, and
+      silently dropped. The publisher never fails because of a log
+      write.
+    """
+
+    def __init__(
+        self,
+        path: str = DESCRIPTION_LOG_DEFAULT_PATH,
+        lines_cap: int = DESCRIPTION_LOG_DEFAULT_LINES_CAP,
+        bytes_cap: int = DESCRIPTION_LOG_DEFAULT_BYTES_CAP,
+        enabled: bool = True,
+    ):
+        self._path_str = os.path.expanduser(path if path else DESCRIPTION_LOG_DEFAULT_PATH)
+        self._lines_cap = max(0, int(lines_cap))
+        self._bytes_cap = max(0, int(bytes_cap))
+        self._enabled = bool(enabled)
+        self._queue: "queue.Queue[Optional[dict]]" = queue.Queue(maxsize=4096)
+        self._lock = threading.Lock()
+        self._worker: Optional[threading.Thread] = None
+        # Cached stats (refreshed by worker after each append + eviction pass).
+        self._writes = 0
+        self._errors = 0
+        self._truncated_count = 0
+        self._bytes_on_disk = 0
+        self._lines_on_disk = 0
+        self._first_event_id: Optional[int] = None
+        self._last_event_id: Optional[int] = None
+        self._first_ts: Optional[str] = None
+        self._last_ts: Optional[str] = None
+        # v12.0: backfill index. event_id -> byte offset in the file.
+        # Rebuilt from disk on first read so cold-starts still serve
+        # /descriptions?since=<id> correctly.
+        self._index: dict = {}
+        self._index_built = False
+        if self._enabled:
+            self._ensure_parent_dir()
+            self._init_worker()
+
+    def _ensure_parent_dir(self) -> None:
+        parent = os.path.dirname(self._path_str)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+
+    def _init_worker(self) -> None:
+        self._worker = threading.Thread(
+            target=self._run, name="perceptiond-description-log", daemon=True
+        )
+        self._worker.start()
+
+    def submit(self, event: dict) -> None:
+        """Queue an event for append. Non-blocking.
+
+        Drops silently if the log is disabled, the worker died, or the
+        in-process queue is full (caller never sees an error).
+        """
+        if not self._enabled or self._worker is None:
+            return
+        try:
+            self._queue.put_nowait(dict(event))  # copy to prevent aliasing
+        except queue.Full:
+            # Worst case: the disk can't keep up. Drop and let the
+            # stats surface the pressure. We never block the publisher.
+            with self._lock:
+                self._errors += 1
+        except Exception:
+            with self._lock:
+                self._errors += 1
+
+    def _run(self) -> None:
+        """Worker loop. Drains the queue, appends to disk, evicts."""
+        while True:
+            try:
+                event = self._queue.get()
+            except Exception:
+                return
+            if event is None:
+                # Sentinel — close requested.
+                return
+            try:
+                self._append_one(event)
+            except Exception:
+                with self._lock:
+                    self._errors += 1
+
+    def _append_one(self, event: dict) -> None:
+        line = json.dumps(event, separators=(",", ":")) + "\n"
+        encoded = line.encode("utf-8")
+        n = len(encoded)
+        with self._lock:
+            # Refresh disk stats if the file changed under us (e.g. someone
+            # truncated it).
+            if not self._index_built:
+                self._rebuild_index_locked()
+            with open(self._path_str, "ab") as f:
+                offset = self._bytes_on_disk
+                f.write(encoded)
+                self._bytes_on_disk += n
+                self._lines_on_disk += 1
+                # Update the backfill index.
+                eid = event.get("event_id")
+                if isinstance(eid, int) and eid > 0:
+                    self._index[eid] = offset
+                self._writes += 1
+                if self._first_event_id is None:
+                    self._first_event_id = eid if isinstance(eid, int) else None
+                    self._first_ts = event.get("timestamp")
+                if isinstance(eid, int):
+                    self._last_event_id = eid
+                self._last_ts = event.get("timestamp")
+            # Evict if over either cap. Run outside the file handle.
+            self._enforce_caps_locked()
+
+    def _enforce_caps_locked(self) -> None:
+        """Trim oldest lines until both caps satisfied. Caller holds _lock."""
+        if self._lines_cap <= 0 and self._bytes_cap <= 0:
+            return
+        guard = 0
+        while (
+            (self._lines_cap > 0 and self._lines_on_disk > self._lines_cap)
+            or (self._bytes_cap > 0 and self._bytes_on_disk > self._bytes_cap)
+        ) and guard < 10_000:
+            if not self._index:
+                break
+            # Oldest event_id is the smallest in the index.
+            oldest_eid = min(self._index)
+            offset = self._index.pop(oldest_eid)
+            # Walk forward counting newlines until we drop one full line.
+            try:
+                with open(self._path_str, "rb") as f:
+                    f.seek(offset)
+                    raw = f.readline()
+                    if not raw:
+                        # Already at EOF — file is shorter than our index.
+                        # Rebuild the index from scratch.
+                        self._index.clear()
+                        self._rebuild_index_locked()
+                        return
+                # Truncate by rewriting: easier to do a full rewrite from
+                # the in-memory index than to splice bytes on disk.
+                tmp_path = self._path_str + ".tmp"
+                with open(self._path_str, "rb") as src, open(tmp_path, "wb") as dst:
+                    src.seek(offset + len(raw))
+                    while True:
+                        chunk = src.read(64 * 1024)
+                        if not chunk:
+                            break
+                        dst.write(chunk)
+                os.replace(tmp_path, self._path_str)
+                self._bytes_on_disk -= len(raw)
+                self._lines_on_disk -= 1
+                self._truncated_count += 1
+                # All later offsets shifted by len(raw). Rebuild index.
+                self._index = {
+                    eid: off - len(raw)
+                    for eid, off in self._index.items()
+                    if eid != oldest_eid
+                }
+                # If the byte cap is now satisfied, exit early.
+            except Exception:
+                with self._lock:
+                    self._errors += 1
+                return
+            guard += 1
+        # If the index is empty but we still have lines on disk, rebuild.
+        if not self._index and self._lines_on_disk > 0:
+            self._rebuild_index_locked()
+
+    def _rebuild_index_locked(self) -> None:
+        """Walk the file and rebuild the event_id -> offset index. Caller holds _lock."""
+        self._index.clear()
+        self._bytes_on_disk = 0
+        self._lines_on_disk = 0
+        self._first_event_id = None
+        self._last_event_id = None
+        self._first_ts = None
+        self._last_ts = None
+        if not os.path.exists(self._path_str):
+            self._index_built = True
+            return
+        try:
+            with open(self._path_str, "rb") as f:
+                offset = 0
+                for raw in f:
+                    line = raw.rstrip(b"\r\n")
+                    self._bytes_on_disk += len(raw)
+                    self._lines_on_disk += 1
+                    try:
+                        obj = json.loads(line.decode("utf-8", errors="replace"))
+                    except Exception:
+                        offset += len(raw)
+                        continue
+                    eid = obj.get("event_id")
+                    if isinstance(eid, int) and eid > 0:
+                        self._index[eid] = offset
+                        if self._first_event_id is None:
+                            self._first_event_id = eid
+                            self._first_ts = obj.get("timestamp")
+                        self._last_event_id = eid
+                        self._last_ts = obj.get("timestamp")
+                    offset += len(raw)
+        except Exception:
+            with self._lock:
+                self._errors += 1
+        self._index_built = True
+
+    def since(self, last_event_id: int) -> List[dict]:
+        """v12.0 — alias for `read()` for symmetry with DescriptionPublisher.since()."""
+        return self.read(last_event_id)
+
+    def read(self, since_event_id: int = 0) -> List[dict]:
+        """Return every event with event_id > since_event_id, oldest first.
+
+        Bounded to the in-memory index — caller can slice / paginate.
+        Returns `[]` when the log is disabled or empty.
+        """
+        with self._lock:
+            if not self._enabled:
+                return []
+            if not self._index_built:
+                self._rebuild_index_locked()
+            if not self._index:
+                return []
+            sorted_ids = sorted(self._index)
+            # Skip ids <= since.
+            start_idx = 0
+            for i, eid in enumerate(sorted_ids):
+                if eid > since_event_id:
+                    start_idx = i
+                    break
+            else:
+                return []
+            ids = sorted_ids[start_idx:]
+            if not ids:
+                return []
+            # Read only the slices we need, in order.
+            out: List[dict] = []
+            # Group adjacent ids that share a contiguous offset window.
+            # For simplicity and correctness we read each id individually
+            # (one syscall per line). The log is small (50K cap) and
+            # callers are humans / dashboards, so this is fine.
+            for eid in ids:
+                offset = self._index[eid]
+                try:
+                    with open(self._path_str, "rb") as f:
+                        f.seek(offset)
+                        raw = f.readline()
+                    obj = json.loads(raw.decode("utf-8", errors="replace").rstrip("\r\n"))
+                    out.append(obj)
+                except Exception:
+                    with self._lock:
+                        self._errors += 1
+                    continue
+            return out
+
+    def stats(self) -> dict:
+        with self._lock:
+            if not self._index_built:
+                self._rebuild_index_locked()
+            return {
+                "path": self._path_str,
+                "lines": self._lines_on_disk,
+                "bytes": self._bytes_on_disk,
+                "bytes_cap": self._bytes_cap,
+                "lines_cap": self._lines_cap,
+                "truncated_count": self._truncated_count,
+                "first_event_id": self._first_event_id or 0,
+                "last_event_id": self._last_event_id or 0,
+                "first_ts": self._first_ts,
+                "last_ts": self._last_ts,
+                "writes": self._writes,
+                "errors": self._errors,
+                "enabled": self._enabled,
+                "queue_depth": self._queue.qsize(),
+            }
+
+    def close(self, timeout: float = 5.0) -> None:
+        """Drain the worker and shut down."""
+        if not self._enabled or self._worker is None:
+            return
+        try:
+            self._queue.put_nowait(None)
+        except Exception:
+            pass
+        self._worker.join(timeout=timeout)
+        self._worker = None
 
 
 class FrameStore:
@@ -550,6 +875,9 @@ class DescriptionPublisher:
         memory_sink_url: Optional[str] = None,
         memory_sink_timeout: float = MEMORY_SINK_TIMEOUT,
         memory_sink_queue_cap: int = MEMORY_SINK_QUEUE_CAP,
+        description_log_path: "Optional[str]" = None,
+        description_log_lines_cap: int = DESCRIPTION_LOG_DEFAULT_LINES_CAP,
+        description_log_bytes_cap: int = DESCRIPTION_LOG_DEFAULT_BYTES_CAP,
     ):
         self.mode = mode
         self.socket_path = socket_path
@@ -564,6 +892,14 @@ class DescriptionPublisher:
             url=memory_sink_url,
             queue_cap=memory_sink_queue_cap,
             timeout=memory_sink_timeout,
+        )
+        # v12.0: persistent append-only description log. Provides a
+        # long-tail backstop for /descriptions?since=<id> when the
+        # in-memory ring has rotated past the client's last-seen id.
+        self.description_log = DescriptionLog(
+            path=description_log_path,
+            lines_cap=description_log_lines_cap,
+            bytes_cap=description_log_bytes_cap,
         )
 
         if mode == "socket":
@@ -619,6 +955,10 @@ class DescriptionPublisher:
                     "event_id": event.get("event_id"),
                 },
             })
+        # v12.0: durable description log. The in-memory ring covers the
+        # live tail; the log is the cold-tier backstop. submit() is
+        # non-blocking — it queues to a background worker.
+        self.description_log.submit(event)
 
     def recent(self, count: int = 10) -> List[dict]:
         """Return last N descriptions (oldest first)."""
@@ -629,15 +969,23 @@ class DescriptionPublisher:
     def since(self, last_event_id: int) -> List[dict]:
         """v11.0 — return all ring entries with event_id > last_event_id.
 
-        Used by `/descriptions?since=<id>` so a reconnecting client can
-        ask only for the events it has not yet seen without paying for
-        the full replay-on-connect window. If the ring has rolled past
-        `last_event_id` (oldest ring event_id > last_event_id), returns
-        an empty list — the caller should detect this via
-        `ring_oldest_event_id()` and fall back to `recent()`.
+        v12.0: when the ring has been overrun (oldest ring event_id
+        > last_event_id), fall back to the persistent description_log
+        so reconnecting clients can still fetch the events they
+        missed across longer windows than the in-memory ring covers.
+        The cursor.overflowed flag is still set; the log fallback just
+        keeps the response useful instead of empty.
         """
         with self._lock:
-            return [e for e in self._ring if e.get("event_id", 0) > last_event_id]
+            ring_items = [e for e in self._ring if e.get("event_id", 0) > last_event_id]
+        if ring_items:
+            return ring_items
+        # v12.0: ring miss — try the cold-tier log
+        try:
+            log_items = self.description_log.since(last_event_id) if self.description_log is not None else []
+            return log_items
+        except Exception:
+            return ring_items
 
     def ring_oldest_event_id(self) -> int:
         """v11.0 — event_id of the oldest entry in the ring (0 if empty).
@@ -671,7 +1019,7 @@ class DescriptionPublisher:
             return len(self._ring)
 
     def close(self):
-        """Close socket."""
+        """Close socket, flush description log."""
         if self._sock:
             self._sock.close()
             self._sock = None
@@ -680,6 +1028,13 @@ class DescriptionPublisher:
                     os.unlink(self.socket_path)
                 except Exception:
                     pass
+        # v12.0: drain the description log worker so the on-disk JSONL
+        # contains every event published before shutdown.
+        try:
+            if self.description_log is not None:
+                self.description_log.close()
+        except Exception:
+            pass
 
 
 class PerceptiondServer:
@@ -750,6 +1105,129 @@ class PerceptiondServer:
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
                 self.wfile.write(data)
+
+            def _resolve_pipeline(self):
+                """Find the live PerceptionPipeline, falling back to the
+                HTTPHandler.server → PerceptiondServer reference chain."""
+                pipeline = getattr(self.server, "pipeline", None)
+                if pipeline is not None:
+                    return pipeline
+                server_obj = getattr(self.server, "_server_ref", None)
+                if server_obj is not None:
+                    return getattr(server_obj, "_pipeline", None)
+                return None
+
+            def _resolve_capture(self):
+                """Find V4L2Capture (for live frames)."""
+                cap = getattr(self.server, "capture", None)
+                if cap is not None:
+                    return cap
+                server_obj = getattr(self.server, "_server_ref", None)
+                if server_obj is not None:
+                    return getattr(server_obj, "_capture", None) or getattr(
+                        server_obj, "_pending_capture", None
+                    )
+                return None
+
+            def _handle_describe(self, params: dict):
+                """v130: on-demand VLM description.
+
+                `params` is the parsed query string (GET) or POST JSON body.
+                Honors `image_id`:
+                  - missing / "latest" → describe most recent live frame
+                  - <hex>             → describe that stored frame from FrameStore
+
+                Calls pipeline.vlm.describe() on a numpy array reconstructed
+                from the JPEG. Returns 503 with reason if VLM is busy or no
+                frame is available, 200 with the description text on success.
+                """
+                t0 = time.time()
+                image_id = params.get("image_id", "latest") if isinstance(params, dict) else "latest"
+                if image_id in (None, "", "latest"):
+                    cap = self._resolve_capture()
+                    if cap is None:
+                        self._send_json(503, {"error": "no capture available"})
+                        return
+                    jpeg_tuple = cap.get_latest_jpeg()
+                    if not jpeg_tuple or jpeg_tuple[0] is None:
+                        self._send_json(503, {"error": "no frame available yet"})
+                        return
+                    jpeg_bytes, ts, w, h = jpeg_tuple
+                else:
+                    if not all(c in "0123456789abcdefABCDEF" for c in str(image_id)):
+                        self._send_json(400, {"error": "invalid image_id"})
+                        return
+                    fs = None
+                    server_obj = getattr(self.server, "_server_ref", None)
+                    if server_obj is not None:
+                        fs = server_obj._resolve_frame_store()
+                    if fs is None:
+                        self._send_json(503, {"error": "no frame store available"})
+                        return
+                    jpeg_bytes = fs.get(image_id)
+                    if jpeg_bytes is None:
+                        self._send_json(404, {"error": "frame not found", "image_id": image_id})
+                        return
+                    ts = fs.get_timestamp(image_id) if hasattr(fs, "get_timestamp") else 0.0
+                    w, h = 0, 0  # unknown without re-decoding; UI can read from /frames/<id>.jpg headers
+
+                pipeline = self._resolve_pipeline()
+                if pipeline is None or not getattr(pipeline, "vlm", None):
+                    self._send_json(503, {"error": "no VLM available"})
+                    return
+
+                # VLM is a single-shot subprocess; reject concurrent
+                # on-demand requests rather than queue them, since the
+                # pipeline already has its own queue for salience-driven
+                # calls. Read the live state from get_status() since
+                # vlm_busy / vlm_queue_depth are only exposed there.
+                vlm_state = {}
+                try:
+                    vlm_state = pipeline.get_status() or {}
+                except Exception:
+                    vlm_state = {}
+                if vlm_state.get("vlm_busy"):
+                    self._send_json(503, {
+                        "error": "vlm busy",
+                        "queue_depth": vlm_state.get("vlm_queue_depth", 0),
+                    })
+                    return
+
+                # Decode JPEG → numpy. PIL is the only encoder used by
+                # capture.FrameStore so import is the only path that works.
+                try:
+                    import io
+                    from PIL import Image
+                    import numpy as _np
+                    img = Image.open(io.BytesIO(jpeg_bytes)).convert("RGB")
+                    frame = _np.array(img)
+                except Exception as e:
+                    self._send_json(500, {"error": f"jpeg decode failed: {e}"})
+                    return
+
+                # Track this as an on-demand invocation so /status reflects it.
+                try:
+                    pipeline._vlm_invocations += 1
+                except Exception:
+                    pass
+
+                text = pipeline.vlm.describe(frame)
+                latency_ms = int((time.time() - t0) * 1000)
+                if text is None:
+                    self._send_json(500, {
+                        "error": "vlm returned no description",
+                        "image_id": image_id,
+                        "latency_ms": latency_ms,
+                    })
+                    return
+                self._send_json(200, {
+                    "image_id": image_id,
+                    "description": text,
+                    "width": w,
+                    "height": h,
+                    "frame_timestamp": ts,
+                    "latency_ms": latency_ms,
+                })
 
             def _parse_query(self, path: str) -> dict:
                 if "?" not in path:
@@ -844,16 +1322,13 @@ class PerceptiondServer:
                         else:
                             self._send_json(503, {"status": "initializing"})
                     elif path == "/descriptions":
-                        # v11.0: supports both `?count=N` (last N) and
-                        # `?since=<event_id>` (everything newer than that
-                        # id). The two are mutually exclusive — `since`
-                        # wins if both are present. Response now also
-                        # includes a `cursor` block with ring_oldest_event_id,
-                        # total_published, and the request's effective
-                        # last_event_id, so the caller can detect a
-                        # ring-buffer overflow (their last_seen_id is
-                        # below ring_oldest_event_id and the `since`
-                        # filter dropped some events).
+                        # v11.0 + v12.0: `?count=N` returns last N from the
+                        # in-memory ring; `?since=<event_id>` returns all
+                        # events newer than that id, with the description
+                        # log as a fallback when the ring has rolled past
+                        # the client's last-seen id. The `cursor` block
+                        # always carries ring + log stats so the client
+                        # can tell exactly what kind of response it got.
                         pipeline = getattr(self.server, "pipeline", None)
                         if pipeline is None:
                             server_obj = getattr(self.server, "_server_ref", None)
@@ -862,13 +1337,19 @@ class PerceptiondServer:
                         qs = self._parse_query(self.path)
                         if pipeline and pipeline.publisher:
                             pub = pipeline.publisher
+                            log = pub.description_log
                             cursor = {
                                 "ring_oldest_event_id": pub.ring_oldest_event_id(),
                                 "total_published": pub.total_published(),
                                 "ring_size": len(pub),
                                 "ring_cap": pub._ring.maxlen,
                             }
+                            # v12.0: log stats available in every response
+                            # so the client can tell whether its since-filter
+                            # came from the ring or the durable log.
+                            cursor["log"] = log.stats() if log else {}
                             since_raw = qs.get("since")
+                            source = "ring"
                             if since_raw is not None:
                                 try:
                                     last_id = int(since_raw)
@@ -879,20 +1360,26 @@ class PerceptiondServer:
                                     return
                                 items = pub.since(last_id)
                                 cursor["requested_since"] = last_id
-                                # If the ring has rolled past the client's
-                                # last id, the `since` filter returned []
-                                # but the client may have actually missed
-                                # events. Flag it so the UI can fall back
-                                # to a full /descriptions?count=N replay.
-                                cursor["overflowed"] = (
+                                overflowed_ring = (
                                     last_id > 0
                                     and cursor["ring_oldest_event_id"] > 0
                                     and last_id < cursor["ring_oldest_event_id"]
                                 )
+                                # v12.0: when the ring has overflowed, fall
+                                # back to the durable log so the client still
+                                # gets the events it missed. The log is
+                                # bounded (default 50,000 lines / 50 MiB) so
+                                # very long outages may still miss events.
+                                if not items and overflowed_ring and log is not None and log._path_str:
+                                    items = log.since(last_id)
+                                    source = "log"
+                                cursor["overflowed"] = overflowed_ring
+                                cursor["source"] = source
                             else:
                                 count = int(qs.get("count", "20"))
                                 items = pub.recent(count)
                                 cursor["requested_count"] = count
+                                cursor["source"] = "ring"
                             self._send_json(200, {
                                 "count": len(items),
                                 "descriptions": items,
@@ -907,8 +1394,31 @@ class PerceptiondServer:
                                     "total_published": 0,
                                     "ring_size": 0,
                                     "ring_cap": 200,
+                                    "source": "none",
+                                    "log": {},
                                 },
                             })
+                    elif path == "/log/stats":
+                        # v12.0: durable description log stats. Exposes the
+                        # JSONL path, line count, byte count, caps, and the
+                        # first/last event_ids / timestamps so an operator
+                        # can tell whether the log is alive and roughly
+                        # full.
+                        pipeline = getattr(self.server, "pipeline", None)
+                        if pipeline is None:
+                            server_obj = getattr(self.server, "_server_ref", None)
+                            if server_obj is not None:
+                                pipeline = getattr(server_obj, "_pipeline", None)
+                        if pipeline is None or pipeline.publisher is None:
+                            self._send_json(200, {"log": None})
+                            return
+                        log = pipeline.publisher.description_log
+                        body = log.stats() if log is not None else {}
+                        self._send_json(200, body)
+                    elif path == "/describe":
+                        # v130: on-demand VLM. ?image_id=<hex|"latest">
+                        self._handle_describe(qs)
+                        return
                     elif path == "/events":
                         # v7.0: Server-Sent Events stream of new descriptions.
                         self._serve_sse_stream()
@@ -1164,6 +1674,21 @@ class PerceptiondServer:
                             self._send_json(200, {"status": "ok", "mode": mode})
                         else:
                             self._send_json(400, {"status": "error", "reason": "invalid mode"})
+                    elif path == "/describe":
+                        # v130: on-demand VLM description.
+                        # Body: {"image_id": "latest"} | {"image_id": "<hex>"}
+                        # If image_id is missing or "latest", describe the
+                        # most recent live frame.
+                        length = int(self.headers.get("Content-Length", 0))
+                        raw = self.rfile.read(length).decode("utf-8", errors="ignore") if length else ""
+                        body = {}
+                        if raw:
+                            try:
+                                body = json.loads(raw)
+                            except Exception:
+                                self._send_json(400, {"error": "invalid JSON body"})
+                                return
+                        self._handle_describe(body if isinstance(body, dict) else {})
                     else:
                         self._send_json(404, {"error": "not found", "path": path})
                 except Exception as e:

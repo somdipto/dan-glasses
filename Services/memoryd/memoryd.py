@@ -117,11 +117,17 @@ class EmbeddingRequest(BaseModel):
 
 
 async def _ensure_model() -> SentenceTransformer:
-    """Wait for the model to finish loading. Times out after 60s."""
+    """v130 (Option C): Wait for the model to finish loading, up to 180s.
+
+    Boot window on cold start is ~25s but with model pre-loading under memory
+    pressure can stretch longer. Bumped from 60s to 180s so requests that
+    arrive during boot are queued, not 503ed. Pairs with /ready returning
+    503 when the model is not yet ready, so readiness probes still work.
+    """
     if _model is not None:
         return _model
     try:
-        await asyncio.wait_for(_model_ready.wait(), timeout=60.0)
+        await asyncio.wait_for(_model_ready.wait(), timeout=180.0)
     except asyncio.TimeoutError:
         raise HTTPException(503, "embedding model still loading")
     return _model
