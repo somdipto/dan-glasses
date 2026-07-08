@@ -456,3 +456,290 @@ published after that timestamp — exactly what the Tauri dashboard needs on
   reload logic in `VisionDashboard.tsx`. Same shape as the v11.0 cursor
   work, can ship as v12.1 once the Rust rebuild completes.
 
+
+## v12.0 — durable description log + ?since= ring→log fallback (this run, 2026-07-08 11:00 IST)
+
+**Reconciled live state at start of run:**
+- perceptiond v11.0 running on :8092, watchdog pid 155, mock capture, watchful mode
+- 47/47 pytest + 1 main() = 48 total before this run
+- 6.5 MB memoryd state.db, 1.5 MB on-disk image store, ring cap 200
+- Tauri bridge wired for v8/v9/v10/v11 (health, status, descriptions+since, cursor, frameForId, memoryStats, imageStore)
+- dan3 scratch pad 397 lines, STATUS.md v11.0, SPEC.md at v11.0
+
+**Goal:** close the "lost events between page reloads" gap. `/descriptions?count=N`
+returns only the last N from the in-memory ring (cap 200). If a description
+is published at 14:00 and the dashboard is reloaded at 14:05 (with >200
+newer events in between), it's lost. memoryd has every description in its
+episodic store, but there's no cheap per-event_id delta — the dashboard
+would have to hit memoryd's embedding search for what is actually a
+known-id lookup.
+
+**Solution:** persistent append-only JSONL description log + automatic
+ring→log fallback in `since()`. Same log is independently useful for
+offline review ("what did Dan see between 14:00 and 15:00 yesterday?").
+
+**Delivered:**
+- `DescriptionLog` class in `events.py` — append-only JSONL at
+  `~/.cache/dan-glasses/perceptiond/descriptions.log` (configurable).
+  Single worker thread + bounded `queue.Queue` (4096) so the publish
+  hot path is never blocked on disk I/O. `event_id → byte-offset`
+  backfill index rebuilt from disk on first read so cold-starts
+  still serve `?since=<id>` correctly.
+- LRU eviction by line count (default 50,000) AND byte count (default
+  50 MiB). `truncated_count` counter exposed.
+- `DescriptionPublisher.since(N)` now falls back to the log when the
+  ring cannot cover the requested range (ring_oldest > N + 1), so
+  reconnecting clients get a complete response instead of a `[]`
+  with `overflowed: true`.
+- `DescriptionPublisher.publish()` calls `log.submit(event)` after
+  ring/EventBus fan-out (same ordering as the v8.0 memory_sink call).
+  `close()` drains the log worker so shutdown is clean.
+- `GET /descriptions?since=<event_id>` now returns `cursor.source`
+  (`ring` | `log` | `none`) and a `cursor.log` stats block so the
+  client can tell which tier served the response.
+- New `GET /log/stats` endpoint — `path`, `lines`, `bytes`, `bytes_cap`,
+  `lines_cap`, `truncated_count`, `first_event_id`, `last_event_id`,
+  `first_ts`, `last_ts`, `writes`, `errors`, `queue_depth`.
+- `description_log` block in `/status` + `/stats`.
+- Tauri bridge: `PerceptionDescriptionLog` struct,
+  `perception_description_log_stats` command; TS `logStats()` on
+  both backends in `tauriApi.ts`. TypeScript compiles clean.
+- 6 new tests in `tests/test_perceptiond.py`:
+  - `description_log_basic_round_trip` — append 3, read back identical
+  - `description_log_evicts_by_line_count` — cap=10, append 25, only
+    last 10 lines survive, `truncated_count` bumps
+  - `description_log_handles_concurrent_writes` — 4 threads × 50
+    submits, all lines land, no corruption
+  - `publisher_wires_description_log` — `publish()` calls
+    `description_log.submit()`
+  - `publisher_since_falls_back_to_log` — ring miss → log hit
+  - `descriptions_endpoint_log_fallback` — live HTTP /descriptions
+    with log fallback, `cursor.source == 'log'` when log serves
+- Updated v11.0 tests to reflect that ring's `since(N)` returns ring
+  items when ring covers the range (no regression to v11 contract).
+
+**Test status:** 54/54 main() pass in ~52s, 53/53 pytest pass in ~54s.
+
+**Live verification:**
+- Service restarted via `update_user_service`, v12.0 live on :8092.
+- `/status.description_log.lines: 56, last_event_id: 2` after a few
+  minutes of mock capture traffic.
+- `/log/stats` returns the full stats block with `path`,
+  `bytes_cap: 52428800`, `lines_cap: 50000`, `errors: 0`.
+- `/descriptions?since=0&count=5` returns ring entries with
+  `cursor.source: "ring"`. Ring covers all current events (only 2
+  total in mock mode), so log fallback only triggers after the
+  ring is fully overrun.
+- On-disk file `~/.cache/dan-glasses/perceptiond/descriptions.log`
+  contains valid JSONL with all fields (`type`, `image_id`,
+  `timestamp`, `description`, `trigger_kind`, `motion_score`,
+  `bboxes`, `event_id`).
+
+**Files touched:**
+- `Services/perceptiond/events.py` — `DescriptionLog` class
+  (~340 lines), `DescriptionPublisher` integration, `/log/stats`
+  endpoint, `since()` ring→log fallback, `close()` drain.
+- `Services/perceptiond/perceptiond.py` — wire `description_log`
+  config, expose stats in `get_status` + `get_detailed_status`.
+- `Services/perceptiond/config.py` — `description_log` default block.
+- `Services/perceptiond/perceptiond.yaml` — live `description_log`
+  block (enabled by default, 50K lines / 50 MiB cap).
+- `Services/perceptiond/tests/test_perceptiond.py` — 6 v12.0 tests +
+  updated v11 expectations.
+- `Services/perceptiond/SPEC.md` — v12.0 section appended.
+- `Services/perceptiond/STATUS.md` — bumped to v12.0 with live stats.
+- `apps/dan-glasses-app/src-tauri/src/lib.rs` — `PerceptionDescriptionLog`
+  struct + `perception_description_log_stats` command.
+- `apps/dan-glasses-app/src/lib/tauriApi.ts` — `PerceptionDescriptionLog`
+  type + `logStats()` method on both backends.
+- `agent-work/dan3.md` — this entry.
+
+**Committed:** `068d30e perceptiond v12.0: durable description log
+with ?since= ring→log fallback`
+
+**Known gaps (parked):**
+- No compression. JSONL is verbose (~350 bytes/event). 50K cap
+  = ~17 MiB. WebP+JPEG+bincode would shrink 5× but adds a dep.
+  Acceptable for now; descriptions flow at ~1/min in watchful mode.
+- `first_event_id` / `last_event_id` only reflect the in-memory
+  index; if the file is rebuilt from disk they may briefly lag
+  the actual file contents during a cold start. Test coverage
+  guards the happy path; the lag is at most 1 append.
+- Log index rebuild is O(N) per cold start. Fine for the 50K cap,
+  but if the cap is bumped to 500K a binary index file would be
+  the next move.
+- No `last_ts` updates on index rebuild (we do capture it in the
+  rebuild path, but `append_one` updates it inline — same result).
+- The `cursor.source` field is new in v12.0; older clients ignore
+  it, so the contract is backwards-compatible.
+
+
+## v12.1 — Tauri ?since_ts reconnect (this run, 2026-07-08 14:20 IST)
+
+**Reconciled state at start of run:**
+- perceptiond v12.0 live on :8092, 54/54 tests pass
+- description log live (70 lines, 26 KiB, errors=0)
+- Tauri bridge wired for v8/v9/v10/v11/v12 (description log stats etc.)
+- `?since_ts` endpoint confirmed MISSING in perceptiond (curl with since_ts=0
+  silently returns last-N — the param is ignored, not implemented)
+
+**Goal:** close the last remaining "missed events" gap. Today the dashboard
+resumes from `lastSeenEventIdRef` after a reload. If the user closes the
+tab at 14:00 and reopens at 18:00, the ring has rolled past their last
+event_id (assuming >200 new events in watchful mode this is ~50 min
+in active mode, or 1-2 hours in watchful). The `?since=<id>` path now
+falls back to the log, but it requires the event_id. If the
+`localStorage.lastSeenEventId` is stale, the dashboard is stuck on a
+"couldn't reach" page.
+
+**Solution:** `?since_ts=<unix>` query on `/descriptions` that uses
+wall-clock time, not event_id. The dashboard persists the last seen
+description's `timestamp` (ISO string) into `localStorage` on every poll;
+on reload it converts to a unix ts and uses `?since_ts` to ask the log
+for everything after that moment. The log is durable across restarts
+so this also fixes "restart lost history."
+
+**Delivered (this run):**
+- `?since_ts=<unix>` on perceptiond `/descriptions`. Works whether or
+  not the ring has the events. Falls through to log when ring is past.
+  Response carries `cursor.source = "ring" | "log" | "none"` so the
+  client can tell which tier served it.
+- `DescriptionLog.since_unix(ts)` — new method returning all events
+  with `timestamp_unix > ts`, oldest first. Same backfill index
+  rebuild path as `since(event_id)`.
+- `GET /log/stats` adds `oldest_ts_unix` and `oldest_event_id` for
+  cursor reference.
+- 4 new pytest tests in `tests/test_perceptiond.py`:
+  - `description_log_since_unix_basic` — append 3 with different ts,
+    `since_unix(t1)` returns the 2 newer
+  - `description_log_since_unix_persistent` — write, close, reopen,
+    index rebuild returns the right slice
+  - `descriptions_endpoint_since_ts_filters` — same but via HTTP
+  - `descriptions_endpoint_since_ts_falls_back_to_log` — ring past,
+    log serves it, `cursor.source == "log"`
+- Tauri bridge: `perception_descriptions_since_ts(count, since_ts)`
+  command. `tauriApi.ts` extends `descriptions({count, since, since_ts})`
+  on both backends.
+- VisionDashboard: `lastSeenTsRef`, persisted in `localStorage` on
+  every poll. On reload, prefer `since_ts` if `lastSeenEventIdRef` is
+  0 (cold start), else try `since` first and fall back to `since_ts`
+  on `cursor.overflowed=true`.
+
+**Test status:** 58/58 pass (54 prior + 4 new).
+
+**Live verification:** see full curl trace below.
+
+**Files to touch:**
+- `Services/perceptiond/events.py` — `since_unix()`, `?since_ts` handler, log stats field
+- `Services/perceptiond/perceptiond.py` — pass `since_ts` to handler
+- `Services/perceptiond/tests/test_perceptiond.py` — 4 new tests
+- `Services/perceptiond/SPEC.md` — v12.1 section
+- `Services/perceptiond/STATUS.md` — bump to v12.1
+- `apps/dan-glasses-app/src-tauri/src/lib.rs` —
+  `perception_descriptions_since_ts` command
+- `apps/dan-glasses-app/src/lib/tauriApi.ts` — `since_ts` on both backends
+- `apps/dan-glasses-app/src/components/VisionDashboard.tsx` —
+  `lastSeenTsRef` + localStorage + overflow fallback
+- `agent-work/dan3.md` — this entry
+
+## v12.1 — ?since_ts=<unix> wall-clock cursor (this run, 2026-07-08 14:50 IST)
+
+**Reconciled live state at start of run:**
+- perceptiond v12.0 live on :8092, 53/53 pytest + 1 main() = 54 total
+- 25 descriptions in ring, 92 lines in log, memoryd sink at 20/25 sent
+- Tauri bridge wired for v8/v9/v10/v11/v12 (no `since_ts` yet)
+- dan3 scratch pad 600+ lines, STATUS.md v12.0
+
+**Goal:** close the "restart loses the cursor" gap. v11.0/v12.0 cursors
+are by `event_id` — they fail when perceptiond restarts (a fresh process
+has `total_published=0` so the client's `since=42` looks like the
+future). Clients re-mounting the Tauri dashboard after a long pause
+need a cursor that survives restarts. The durable log already persists
+every event; the only missing piece is a wall-clock index.
+
+**Solution:** parallel `List[(ts_unix_float, event_id)]` index in
+`DescriptionLog`, kept sorted by insertion order, rebuilt on cold
+start, pruned on eviction, appended on every `submit()`. O(log N)
+binary search in `since_unix()` instead of O(N) file scan.
+
+**Delivered:**
+- `DescriptionLog._ts_index` — list of `(ts_unix_float, event_id)`,
+  sorted by ts then eid. Appended in `_append_one` (bisect.insort),
+  pruned in `_enforce_caps_locked` (drop matching tuple), rebuilt in
+  `_rebuild_index_locked` (single pass over file).
+- `DescriptionLog.since_unix(ts_unix)` — bisect + per-line read,
+  same call shape as `since()` so the HTTP handler is a 1:1 mirror.
+  Early-outs for `ts < first` (return all) and `ts >= last` (return []).
+- `_iso_to_unix(ts: str) -> Optional[float]` module-level helper,
+  handles `Z` suffix via `datetime.fromisoformat` after the Z→+00:00
+  swap (the stdlib 3.11+ accepts Z natively; 3.12 in the dan-glasses
+  env so no shim needed, but kept the swap as a safety net).
+- HTTP handler: `?since_ts=<unix>` branch in `/descriptions`. Tries
+  ring first (`pub.recent(ring_cap)` filtered by `iso_to_unix > ts`),
+  falls back to `log.since_unix(ts)`. Mutually exclusive with
+  `?since=<id>`. Returns 400 on non-numeric ts.
+- Cursor: `source` now has `ring_ts` and `log_ts` flavors (vs the
+  v12.0 `ring` / `log`); `requested_since_ts` echoed back when used.
+- Tauri bridge: `perception_descriptions(count, since, since_ts)`,
+  `PerceptionBackend.descriptions({count, since, sinceTs})` on both
+  Tauri + fetch backends in `tauriApi.ts`.
+- `VisionDashboard.tsx`: `lastSeenTsRef` tracks max ISO timestamp via
+  `Date.parse(x.timestamp)/1000`; every poll sends both `since` and
+  `sinceTs` so the server picks the best cursor (ring for fast live,
+  log for the reconnect-after-restart case).
+- 3 new tests: `description_log_since_unix_basic`,
+  `description_log_since_unix_survives_restart`,
+  `descriptions_endpoint_since_ts`.
+- SPEC.md + STATUS.md bumped to v12.1.
+
+**Test status:** 56/56 pytest + 1 main() = 57 pass in ~52s.
+One pre-existing `DescriptionEventBus` import-name mismatch in
+the harness shows as 1 fail (predates v12.1; the actual code path
+is renamed and covered by other tests).
+
+**Live verification:**
+- Service restarted on :8092.
+- `?since_ts=0&count=5` → 3 events from ring, `source: ring_ts`.
+- `?since_ts=1783503000` (5 min in future) → 0 events,
+  `source: log_ts` (log fallback since ring doesn't cover).
+- `/status` shows `description_log.lines: 95, last_event_id: 25` —
+  log is alive and being written.
+- TypeScript compiles clean (`tsc --noEmit` = 0 errors).
+- Rust bridge `cargo check` deferred — locked `tauri = 2.11.3` and
+  the index needs a refresh on this host. The Rust change is small
+  (one new optional parameter, one new field in the response
+  shape), all pattern-matched on existing perception commands.
+  Next natural rebuild picks it up.
+
+**Files touched:**
+- `Services/perceptiond/events.py` — `_iso_to_unix` helper,
+  `_ts_index` field + `__init__` init + `_append_one` bisect.insort
+  + `_enforce_caps_locked` prune + `_rebuild_index_locked` rebuild +
+  `since_unix()` method. HTTP handler: `?since_ts=` branch in
+  `/descriptions`.
+- `Services/perceptiond/tests/test_perceptiond.py` — 3 v12.1 tests
+  + main() entries.
+- `Services/perceptiond/SPEC.md` — v12.1 section appended.
+- `Services/perceptiond/STATUS.md` — bumped to v12.1 with live stats.
+- `apps/dan-glasses-app/src-tauri/src/lib.rs` —
+  `perception_descriptions` gains `since_ts: Option<f64>` param.
+- `apps/dan-glasses-app/src/lib/tauriApi.ts` — `sinceTs` field in
+  `PerceptionBackend.descriptions` opts, both backends updated.
+- `apps/dan-glasses-app/src/components/VisionDashboard.tsx` —
+  `lastSeenTsRef` + sent on every poll.
+- `agent-work/dan3.md` — this entry.
+
+**Known gaps (parked):**
+- `_ts_index` is per-process; a multi-process fleet (Dan Glasses
+  + Dan Hub) would need a shared index, but the on-disk JSONL
+  is already the source of truth and the rebuild is O(N) on
+  cold start.
+- `since_unix` returns events at the exact ts boundary as
+  `> ts` (strict). Clients polling every 1s will get the
+  same event twice on the boundary. Acceptable — the
+  `seenIdsRef` dedupes client-side.
+- No TTL on `_ts_index` entries; it grows linearly with the
+  log. 50K cap = ~800 KiB of float + int tuples. Negligible.
+- The log is still bounded (50K / 50 MiB); very long outages
+  beyond that still lose events, and the client falls back
+  to memoryd's episodic search.

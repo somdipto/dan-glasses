@@ -108,7 +108,9 @@ export interface PerceptionBackend {
   status(): Promise<PerceptionStatus | null>;
   // v11.0: optional `since` event_id. Omit for "last N" (default). The
   // backend returns the cursor block so the UI can detect ring overflow.
-  descriptions(opts: { count?: number; since?: number | null }): Promise<PerceptionDescriptionsResponse | null>;
+  // v12.1: optional `sinceTs` unix seconds. Survives perceptiond restarts
+  // because the log is durable. Mutually exclusive with `since`.
+  descriptions(opts: { count?: number; since?: number | null; sinceTs?: number | null }): Promise<PerceptionDescriptionsResponse | null>;
   // v11.0: cursor snapshot for resume logic.
   cursor(): Promise<PerceptionCursor | null>;
   setMode(mode: Mode): Promise<PerceptionModeResponse | null>;
@@ -153,11 +155,12 @@ function createTauriBackend(): PerceptionBackend {
         return null;
       }
     },
-    async descriptions(opts: { count?: number; since?: number | null }): Promise<PerceptionDescriptionsResponse | null> {
+    async descriptions(opts: { count?: number; since?: number | null; sinceTs?: number | null }): Promise<PerceptionDescriptionsResponse | null> {
       try {
         return await invoke<PerceptionDescriptionsResponse>('perception_descriptions', {
           count: opts.count ?? 20,
           since: opts.since ?? null,
+          sinceTs: opts.sinceTs ?? null,
         });
       } catch {
         return null;
@@ -222,11 +225,12 @@ function createFetchBackend(baseUrl: string): PerceptionBackend {
         return null;
       }
     },
-    async descriptions(opts: { count?: number; since?: number | null }): Promise<PerceptionDescriptionsResponse | null> {
+    async descriptions(opts: { count?: number; since?: number | null; sinceTs?: number | null }): Promise<PerceptionDescriptionsResponse | null> {
       try {
         const params = new URLSearchParams();
         params.set('count', String(opts.count ?? 20));
         if (opts.since != null) params.set('since', String(opts.since));
+        if (opts.sinceTs != null) params.set('since_ts', String(opts.sinceTs));
         const r = await fetch(`${baseUrl}/descriptions?${params.toString()}`);
         return r.ok ? ((await r.json()) as PerceptionDescriptionsResponse) : null;
       } catch {

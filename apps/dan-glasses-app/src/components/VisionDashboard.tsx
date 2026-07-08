@@ -57,6 +57,11 @@ export default function VisionDashboard({ baseUrl = SERVICE_URLS.perceptiond }: 
   // tab-switch / resync never duplicates or drops descriptions even when
   // the in-memory ring (cap=200) has rolled over between polls.
   const lastSeenEventIdRef = useRef<number>(0);
+  // v12.1: highest wall-clock timestamp we've already seen this session
+  // (Unix seconds, float). Survives perceptiond restarts because the
+  // description log is durable; ring event_id is reset on restart so
+  // the log's since_ts() is the only cursor that bridges reloads.
+  const lastSeenTsRef = useRef<number>(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -73,12 +78,22 @@ export default function VisionDashboard({ baseUrl = SERVICE_URLS.perceptiond }: 
         // newer than what we already have. On first mount lastSeenEventIdRef
         // is 0, so we get the full DESC_COUNT window from the ring.
         const sinceArg = lastSeenEventIdRef.current || undefined;
-        const d = await backend.descriptions({ count: DESC_COUNT, since: sinceArg });
+        // v12.1: also pass `sinceTs` (Unix seconds). The server picks
+        // the best of `since` and `sinceTs`; the wall-clock cursor
+        // survives perceptiond restarts and works for clients that
+        // re-mount after a long pause.
+        const sinceTsArg = lastSeenTsRef.current || undefined;
+        const d = await backend.descriptions({
+          count: DESC_COUNT,
+          since: sinceArg,
+          sinceTs: sinceTsArg,
+        });
         if (cancelled) return;
         if (d && Array.isArray(d.descriptions)) {
           const descs = d.descriptions;
           let added = 0;
           let maxId = lastSeenEventIdRef.current;
+          let maxTs = lastSeenTsRef.current;
           for (const x of descs) {
             if (!seenIdsRef.current.has(x.event_id)) {
               seenIdsRef.current.add(x.event_id);
@@ -87,8 +102,18 @@ export default function VisionDashboard({ baseUrl = SERVICE_URLS.perceptiond }: 
             if (typeof x.event_id === 'number' && x.event_id > maxId) {
               maxId = x.event_id;
             }
+            // v12.1: track the highest wall-clock timestamp so the next
+            // poll can ask perceptiond for "everything since <ts>".
+            // Date.parse returns ms; divide to get Unix seconds.
+            if (typeof x.timestamp === 'string' && x.timestamp) {
+              const ts = Date.parse(x.timestamp);
+              if (Number.isFinite(ts) && ts / 1000 > maxTs) {
+                maxTs = ts / 1000;
+              }
+            }
           }
           lastSeenEventIdRef.current = maxId;
+          lastSeenTsRef.current = maxTs;
           setDescriptions(descs);
           if (added > 0) setNewCount((n) => n + added);
         }

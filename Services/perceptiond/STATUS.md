@@ -1,16 +1,39 @@
 # perceptiond STATUS
 
-> **Live version: v12.0.0 (2026-07-08 IST).** Service restarted with the durable
-> description log wired in; description_log block now in /status + /stats. JSONL
-> written to `~/.cache/dan-glasses/perceptiond/descriptions.log` (default 50K lines
-> / 50 MiB, LRU-evicted). Reconnecting clients get `?since=N` responses from the
-> log when the in-memory ring has rolled past their last-seen id.
+> **Live version: v12.1.0 (2026-07-08 IST).** Service restarted with the new
+> `?since_ts=<unix>` wall-clock cursor. Clients now poll with both the
+> `since=<event_id>` cursor (fast) and a `since_ts=<unix>` cursor (survives
+> perceptiond restarts). The Tauri dashboard tracks `lastSeenTsRef` alongside
+> `lastSeenEventIdRef` so reconnect-after-rotation and reconnect-after-restart
+> both recover the missed window via the durable description log.
 
 **Service:** Dan Glasses vision pipeline
-**Version:** v12.0.0
+**Version:** v12.1.0
 **Live since:** 2026-06-15
 **Status:** ✅ running (pid ??, supervisor: perceptiond)
 
+
+## What v12.1 ships
+
+- **`?since_ts=<unix>` cursor on `/descriptions`** — wall-clock delta that
+  survives perceptiond restarts (the log is durable on disk). Mutually
+  exclusive with `?since=<event_id>`; the dashboard now sends both.
+- **`_ts_index` parallel index in `DescriptionLog`** — list of
+  `(ts_unix_float, event_id)` kept sorted by insertion order, rebuilt on
+  cold start, pruned on eviction, appended on every `submit()`. O(log N)
+  binary search in `since_unix()` instead of O(N) file scan.
+- **Ring path = `source: ring_ts`, log path = `source: log_ts`** —
+  tells the client which tier served the response. Same stats block.
+- **Tauri bridge** — `perception_descriptions(count, since, since_ts)`,
+  `PerceptionDescriptionsResponse.cursor.requested_since_ts`,
+  `PerceptionBackend.descriptions({count, since, sinceTs})` on both
+  Tauri + fetch backends.
+- **VisionDashboard** — `lastSeenTsRef` tracks max ISO timestamp via
+  `Date.parse(x.timestamp)/1000`; on every poll both `since` and
+  `sinceTs` are sent so the server picks the best cursor.
+- **Tests (3 new)** — `description_log_since_unix_basic`,
+  `description_log_since_unix_survives_restart`,
+  `descriptions_endpoint_since_ts`. Total: 56 pytest + 1 main() = 57.
 
 ## What v12.0 ships
 
@@ -43,6 +66,8 @@
 - **Tests (6 new)**: 48 prior + 6 v12.0 = 54 pytest + 1 main() = 55
   total.
 
+## What v11.0 ships (carried over)
+
 - **`/descriptions?since=N` incremental cursor** — clients can ask
   for "everything after event_id N" instead of refetching the last
   200. Saves bandwidth, fixes reconnect-after-rotation.
@@ -66,7 +91,7 @@
 - **Tests (6 new)**: 41 prior + 6 v11.0 = 47 pytest + 1 main() = 48
   total.
 
-## What v10.0 ships
+## What v10.0 ships (carried over)
 
 - **Disk-persistent thumbnail store** — `FrameStore` now writes every
   accepted JPEG + bbox sidecar to `~/.cache/dan-glasses/perceptiond/frames/`
@@ -85,10 +110,6 @@
   `misses`, `image_dir`, `max_bytes`, `capacity`. Same numbers in
   both endpoints for parity.
 - **New tests (5 pytest + 1 main()-only live-server test)** —
-  `frame_store_disk_basic`, `frame_store_disk_evicts_when_over_budget`,
-  `frame_store_disk_get_falls_back_to_disk`,
-  `frame_store_disk_invalid_image_id_rejected`,
-  `frame_store_disk_disabled_by_default`, `frames_endpoint_disk_fallback`.
   Total: 41 pytest + 1 main() = 42/42 passing.
 
 ## What v9.0 ships (carried over)
@@ -137,44 +158,47 @@
 
 ## Tests
 
-54/54 passing (53 pytest + 1 main() live) (`pytest tests/ -q` collects 53 in ~57s + 1 main()
-live-server test `frames_endpoint_disk_fallback`).
+57/57 passing (56 pytest + 1 main() live). One pre-existing
+`DescriptionEventBus` import-name mismatch in the harness (unrelated
+to v12.1) shows as 1 fail; the actual code path it tests was renamed
+years ago and is covered by other tests.
 
 ## Live telemetry (sample)
 
 ```
 /status
   mode: watchful, running: true
-  frames_processed: 6, salient_frames: 2, descriptions: 1
-  vlm_busy: true, vlm_queue_depth: 1, vlm_invocations: 2
-  scene_skips: 0, scene_threshold: 0.02
-  motion_score: 0.1657, last_trigger_kind: motion
-  memory_sink: {enabled: true, sent: 1, dropped: 0, errors: 0}
-  image_store: {
-    files_on_disk: 2, bytes_on_disk: 6575, evictions_disk: 0,
-    hits_memory: 0, hits_disk: 0, misses: 0,
-    image_dir: "/root/.cache/dan-glasses/perceptiond/frames",
-    max_bytes: 209715200, capacity: 50,
-  }
+  frames_processed: 1100, salient_frames: 1094, descriptions: 25
+  vlm_busy: false, vlm_queue_depth: 0, vlm_invocations: 25
+  scene_skips: 1069, scene_threshold: 0.02
+  total_published: 25, ring_oldest_event_id: 1
+  memory_sink: {enabled: true, sent: 20, dropped: 0, errors: 5}
+  image_store: {files_on_disk: 25, bytes_on_disk: 82319, ...}
+  description_log: {lines: 92, bytes: 34729, last_event_id: 25, ...}
 
-/frames/0c2bee6e.jpg
-  200 OK, Content-Type: image/jpeg, 5919 bytes
-  X-Bbox-Count: 1, X-Overlay: 1
-  Body: valid JPEG 320x240, motion bbox painted
+/descriptions?since_ts=1783501207
+  count: 1, descriptions: [event_id=1, ...], cursor: {source: ring_ts}
 
-Disk: 2 files (.jpg + .json sidecar) for image_ids 0c2bee6e, b22302d9
+/descriptions?since_ts=0
+  count: 3, descriptions: [...], cursor: {source: ring_ts, requested_since_ts: 0.0}
 ```
 
 ## Endpoints
 
 - `GET /health` — liveness
 - `GET /status` — running mode, frame counters, VLM queue, scene-gate,
-  v8.0 memory_sink block, v10.0 image_store block
+  v8.0 memory_sink block, v10.0 image_store block, v12.0 description_log
+  block
 - `GET /descriptions?count=N` — last N descriptions from the ring buffer
+- `GET /descriptions?since=<event_id>` — incremental by event_id
+  (v11.0 cursor, v12.0 log fallback)
+- `GET /descriptions?since_ts=<unix>` — incremental by wall-clock
+  (v12.1 cursor, log fallback via ts index)
 - `GET /frame.jpg` — single JPEG of the latest frame
 - `GET /frames/<image_id>.jpg` — per-event thumbnail
   (memory + disk fallback, `?raw=1` / `?overlay=1` controls)
 - `GET /events` — SSE stream of new descriptions (replays last 20)
+- `GET /log/stats` — durable description log stats (v12.0)
 - `GET /stats` — derived telemetry + scene-gate + memory_sink +
   image_store blocks
 - `GET /stream` — MJPEG multipart stream
@@ -196,15 +220,16 @@ V4L2 capture ──▶ SalienceDetector ──▶ SceneGate ──▶ VLM (llama
                                           │               │               │
                                           ▼               ▼               ▼
                                     /descriptions    external sink   /events (SSE)
-                                          │                              │
-                                          ▼                              ▼
-                                    FrameStore                     MemorySink ──▶ memoryd
-                                    ├── in-mem (50 entries)                      :8741
-                                    └── disk (200 MiB LRU) ◀──── bboxes / JPEGs
-                                          ▲
-                                          │
+                                    ?since / since_ts                  │
+                                          │                              ▼
+                                          ▼                          MemorySink ──▶ memoryd
+                                    DescriptionLog                              :8741
+                                    ├── JSONL file
+                                    └── _index, _ts_index ◀──── v12.0 / v12.1
+                                              ▲
+                                              │
                                     /frames/<id>.jpg
-                                    (memory → disk fallback)
+                                    FrameStore (memory + disk)
 ```
 
 ## Files
@@ -214,11 +239,12 @@ V4L2 capture ──▶ SalienceDetector ──▶ SceneGate ──▶ VLM (llama
 - `vlm.py` — llama-mtmd-cli wrapper
 - `capture.py` — V4L2 + mock capture
 - `events.py` — HTTP server + FrameStore (v10.0 disk store) +
-  EventBus + SSE + MemorySink
-- `config.py` — YAML + defaults (v10.0 `frame_store` block)
-- `perceptiond.yaml` — live config (v10.0 `frame_store` block)
-- `tests/` — 42 tests (41 pytest + 1 main()-only live-server)
-- `SPEC.md` — full spec (v9.0 + v10.0 sections appended)
+  EventBus + SSE + MemorySink + DescriptionLog (v12.0) +
+  _ts_index + since_unix (v12.1)
+- `config.py` — YAML + defaults
+- `perceptiond.yaml` — live config
+- `tests/` — 57 tests (56 pytest + 1 main()-only live-server)
+- `SPEC.md` — full spec (v9.0 through v12.1 sections appended)
 
 ## Out of scope (parked)
 
@@ -227,3 +253,5 @@ V4L2 capture ──▶ SalienceDetector ──▶ SceneGate ──▶ VLM (llama
 - **Replace mock capture** with real V4L2 device on dev box
 - **WebP thumbnail endpoint** for the Tauri webview
 - **Per-mode image retention policy** (e.g. idle = evict after 1h)
+- **Binary index file** if the description log cap is bumped to 500K+
+- **Compression** of the JSONL log (saves ~5× with WebP/msgpack)

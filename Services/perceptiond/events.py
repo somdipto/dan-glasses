@@ -15,8 +15,10 @@ import uuid
 import queue
 from collections import deque
 from typing import Optional, List, Deque, Tuple
+from datetime import datetime, timezone  # v12.1 — for _iso_to_unix
 from urllib import request as _urlrequest
 from urllib.error import URLError, HTTPError
+from datetime import datetime, timezone
 
 
 RING_BUFFER_SIZE = 200  # max descriptions held in memory
@@ -200,6 +202,27 @@ DESCRIPTION_LOG_DEFAULT_LINES_CAP = 50_000
 DESCRIPTION_LOG_DEFAULT_BYTES_CAP = 50 * 1024 * 1024  # 50 MiB
 
 
+def _iso_to_unix(ts: str) -> Optional[float]:
+    """v12.1 — parse an ISO-8601 timestamp into a Unix epoch (float seconds).
+
+    Accepts the formats perceptiond writes (`2026-07-08T08:51:21Z`,
+    `2026-07-08T08:51:21.123456+00:00`). Returns None for empty / malformed
+    input so callers can drop the entry from the ts index without raising.
+    """
+    if not ts or not isinstance(ts, str):
+        return None
+    try:
+        # Python 3.11+ fromisoformat handles the trailing 'Z' in 3.11+
+        # but not in earlier versions. Normalize first.
+        cleaned = ts.strip()
+        if cleaned.endswith("Z"):
+            cleaned = cleaned[:-1] + "+00:00"
+        dt = datetime.fromisoformat(cleaned)
+        return dt.timestamp()
+    except Exception:
+        return None
+
+
 class DescriptionLog:
     """v12.0 — durable, append-only JSONL description log.
 
@@ -258,6 +281,12 @@ class DescriptionLog:
         # /descriptions?since=<id> correctly.
         self._index: dict = {}
         self._index_built = False
+        # v12.1: parallel ts index. List of (ts_unix_float, event_id),
+        # always sorted by ts then eid. Mirrors _index so a wall-clock
+        # `?since_ts=<unix>` lookup is O(log N) binary search instead of
+        # scanning the whole file. Rebuilt in _rebuild_index_locked;
+        # appended to in _append_one; pruned in _enforce_caps_locked.
+        self._ts_index: List[Tuple[float, int]] = []
         if self._enabled:
             self._ensure_parent_dir()
             self._init_worker()
@@ -326,6 +355,25 @@ class DescriptionLog:
                 eid = event.get("event_id")
                 if isinstance(eid, int) and eid > 0:
                     self._index[eid] = offset
+                    # v12.1: mirror to the sorted-by-ts index. Parse
+                    # the timestamp at write time (cheap; runs on the
+                    # worker thread, off the publisher hot path) so the
+                    # ts index is append-only here and only needs to be
+                    # rebuilt from disk in _rebuild_index_locked().
+                    ts_str = event.get("timestamp")
+                    ts_unix = _iso_to_unix(ts_str) if ts_str else None
+                    if ts_unix is not None:
+                        # Insertion-sort is fine — log is bounded (50K
+                        # cap) and the new line almost always lands at
+                        # the tail (descriptions are monotonic in
+                        # wall-clock time). Falls back to linear scan
+                        # when out-of-order events arrive.
+                        insort = getattr(self, "_ts_index_insort", None)
+                        if insort is None:
+                            from bisect import insort as _insort
+                            insort = _insort
+                            self._ts_index_insort = _insort
+                        insort(self._ts_index, (ts_unix, eid))
                 self._writes += 1
                 if self._first_event_id is None:
                     self._first_event_id = eid if isinstance(eid, int) else None
@@ -350,6 +398,12 @@ class DescriptionLog:
             # Oldest event_id is the smallest in the index.
             oldest_eid = min(self._index)
             offset = self._index.pop(oldest_eid)
+            # v12.1: also drop the matching (ts, eid) tuple from the
+            # parallel ts index. Linear scan is fine — evictions are
+            # infrequent and the list is bounded.
+            self._ts_index = [
+                (ts, eid) for (ts, eid) in self._ts_index if eid != oldest_eid
+            ]
             # Walk forward counting newlines until we drop one full line.
             try:
                 with open(self._path_str, "rb") as f:
@@ -400,7 +454,13 @@ class DescriptionLog:
         self._last_event_id = None
         self._first_ts = None
         self._last_ts = None
+        # v12.1: also rebuild the parallel ts index so since_unix() works
+        # after a cold start. We collect (ts_unix, eid) pairs first then
+        # sort — _ts_index must be ordered by ts for the binary search
+        # in since_unix() to be correct.
+        ts_pairs: List[Tuple[float, int]] = []
         if not os.path.exists(self._path_str):
+            self._ts_index = []
             self._index_built = True
             return
         try:
@@ -423,10 +483,20 @@ class DescriptionLog:
                             self._first_ts = obj.get("timestamp")
                         self._last_event_id = eid
                         self._last_ts = obj.get("timestamp")
+                        # v12.1: collect ts index entries. Best-effort
+                        # — corrupt / missing timestamps are silently
+                        # dropped, the description is still readable by
+                        # event_id.
+                        ts_str = obj.get("timestamp")
+                        ts_unix = _iso_to_unix(ts_str) if ts_str else None
+                        if ts_unix is not None:
+                            ts_pairs.append((ts_unix, eid))
                     offset += len(raw)
         except Exception:
             with self._lock:
                 self._errors += 1
+        ts_pairs.sort()
+        self._ts_index = ts_pairs
         self._index_built = True
 
     def since(self, last_event_id: int) -> List[dict]:
@@ -471,6 +541,52 @@ class DescriptionLog:
                         f.seek(offset)
                         raw = f.readline()
                     obj = json.loads(raw.decode("utf-8", errors="replace").rstrip("\r\n"))
+                    out.append(obj)
+                except Exception:
+                    with self._lock:
+                        self._errors += 1
+                    continue
+            return out
+
+    def since_unix(self, ts_unix: float) -> List[dict]:
+        """v12.1 — return every event with timestamp_unix > ts_unix, oldest first.
+
+        Uses the parallel `_ts_index` (sorted list of (ts_unix, event_id))
+        for an O(log N) bisect start, then falls through to the same
+        per-event file read as `read()`. The point is the wall-clock
+        cursor survives perceptiond restarts: a reconnecting client
+        only needs to remember "I last saw a description at 14:05:00"
+        and can pick up exactly where it left off.
+        """
+        import bisect
+        with self._lock:
+            if not self._enabled:
+                return []
+            if not self._index_built:
+                self._rebuild_index_locked()
+            if not self._ts_index:
+                return []
+            # _ts_index is sorted by (ts_unix, event_id). bisect on the
+            # first element of each tuple.
+            keys = [t for t, _ in self._ts_index]
+            start = bisect.bisect_right(keys, float(ts_unix))
+            if start >= len(self._ts_index):
+                return []
+            eids = [eid for _, eid in self._ts_index[start:]]
+            if not eids:
+                return []
+            out: List[dict] = []
+            for eid in eids:
+                offset = self._index.get(eid)
+                if offset is None:
+                    continue
+                try:
+                    with open(self._path_str, "rb") as f:
+                        f.seek(offset)
+                        raw = f.readline()
+                    obj = json.loads(
+                        raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                    )
                     out.append(obj)
                 except Exception:
                     with self._lock:
@@ -1379,6 +1495,32 @@ class PerceptiondServer:
                                     items = log.since(last_id)
                                     source = "log"
                                 cursor["overflowed"] = overflowed_ring
+                                cursor["source"] = source
+                            # v12.1: ?since_ts=<unix> — wall-clock cursor
+                            # that survives perceptiond restarts. Tries the
+                            # ring first (in-memory), falls back to the
+                            # durable log's since_unix() (parallel ts index).
+                            # Mutually exclusive with ?since=<id>.
+                            elif (since_ts_raw := qs.get("since_ts")) is not None:
+                                try:
+                                    ts_unix = float(since_ts_raw)
+                                except ValueError:
+                                    self._send_json(400, {
+                                        "error": "since_ts must be a unix timestamp (seconds)",
+                                    })
+                                    return
+                                # Try ring first — convert to eid cursor.
+                                items = []
+                                for ev in pub.recent(pub._ring.maxlen):
+                                    ev_ts = _iso_to_unix(ev.get("timestamp", ""))
+                                    if ev_ts is not None and ev_ts > ts_unix:
+                                        items.append(ev)
+                                cursor["requested_since_ts"] = ts_unix
+                                if not items and log is not None and log._path_str:
+                                    items = log.since_unix(ts_unix)
+                                    source = "log_ts"
+                                else:
+                                    source = "ring_ts"
                                 cursor["source"] = source
                             else:
                                 count = int(qs.get("count", "20"))

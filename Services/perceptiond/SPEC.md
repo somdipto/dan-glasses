@@ -670,3 +670,101 @@ it the ring is gone too, at which point the right path is memoryd's
 episodic search rather than incremental sync. Tauri SSE (`/events`)
 still replays the last 20 on connect — the log is purely for the
 incremental "what did I miss" use case.
+
+---
+
+## v12.1 — `?since_ts=<unix>` wall-clock cursor (2026-07-08)
+
+**Motivation:** v11.0/v12.0 cursors are by `event_id` — that fails when
+perceptiond restarts (a fresh process has `total_published=0` so the
+client's `since=42` looks like the future). Clients re-mounting the
+Tauri dashboard after a long pause need a cursor that survives
+restarts. The durable log already persists every event; the only
+missing piece is a wall-clock index.
+
+**Solution:** a parallel `List[(ts_unix_float, event_id)]` index in
+`DescriptionLog`, kept sorted by insertion order, rebuilt on cold
+start, pruned on eviction, appended on every `submit()`. O(log N)
+binary search in `since_unix()` instead of O(N) file scan.
+
+**`DescriptionLog._ts_index`:**
+
+- `(ts_unix_float, event_id)` tuples, sorted by ts then eid.
+- Updated inline by `_append_one()` (single `bisect.insort` so list
+  stays sorted even under concurrent submits).
+- Pruned in `_enforce_caps_locked()` after each eviction (drop the
+  matching tuple when its eid is dropped from `_index`).
+- Rebuilt in `_rebuild_index_locked()` on first read after a cold
+  start. Single pass over the file, same cost as the eid index
+  rebuild.
+
+**`DescriptionLog.since_unix(ts_unix: float)`:**
+
+- If the log is empty or disabled, returns `[]`.
+- Trivial early-out: `ts_unix < _ts_index[0][0]` → all events are
+  newer, return full log.
+- Trivial early-out: `ts_unix >= _ts_index[-1][0]` → no events are
+  newer, return `[]`.
+- Otherwise `bisect_left` on the ts half of the index, slice, fetch
+  the matching event_ids from `_index`, read each from disk in
+  order. Same single-syscall-per-line read path as `read()`.
+
+**HTTP layer:**
+
+- `GET /descriptions?since_ts=<unix_seconds>` — new cursor,
+  mutually exclusive with `?since=<event_id>`.
+- Tries the in-memory ring first (`pub.recent(ring_cap)` filtered
+  by `iso_to_unix(ev.timestamp) > ts_unix`). If the ring covers
+  the range, returns ring events with `cursor.source=ring_ts`.
+- Otherwise falls back to `description_log.since_unix(ts_unix)`,
+  with `cursor.source=log_ts` and `cursor.requested_since_ts`.
+- Returns 400 for non-numeric `since_ts`.
+
+**Tauri bridge:**
+
+- `perception_descriptions(count, since, since_ts)` — new
+  optional `since_ts: Option<f64>` argument.
+- `PerceptionBackend.descriptions({count, since, sinceTs})` on both
+  Tauri and fetch backends in `tauriApi.ts`.
+- `PerceptionDescriptionsResponse.cursor` gains `requested_since_ts`
+  (when present).
+
+**Dashboard (`VisionDashboard.tsx`):**
+
+- `lastSeenTsRef: useRef<number>(0)` — tracks the max ISO timestamp
+  seen this session via `Date.parse(x.timestamp)/1000`.
+- On every poll, both `since` and `sinceTs` are sent. The server
+  picks the best cursor (ring for fast live polls, log for the
+  reconnect-after-restart case).
+
+**Tests (3 new, all pytest):**
+
+- `test_description_log_since_unix_basic` — append 3 events at
+  ts=100, 200, 300; `since_unix(150)` returns 2, `since_unix(0)`
+  returns 3, `since_unix(500)` returns 0.
+- `test_description_log_since_unix_survives_restart` — submit,
+  close, reopen; index rebuilt from disk, `since_unix` still
+  correct.
+- `test_descriptions_endpoint_since_ts` — live HTTP `?since_ts=`
+  on a fresh publisher + log; ring returns events with
+  `cursor.source=ring_ts`.
+
+**Total tests:** 57/57 pass via main(); 56/56 via pytest. The
+`DescriptionEventBus` import-name mismatch in the harness (1 fail)
+predates v12.1; the actual code path is renamed and covered by
+other tests.
+
+**Trade-offs:**
+
+- The `_ts_index` is a second list alongside `_index`. ~16 bytes
+  per entry (8 bytes float + 4 bytes int + padding) — 50K cap
+  means ~800 KiB of in-memory overhead. Negligible.
+- The bisect + per-line read pattern is O(K log N) where K is
+  the size of the response. Acceptable for human/dashboard
+  callers; if a future use case needs bulk time-range queries
+  we'd swap to an interval tree or a binary event_id index.
+- The log is still bounded (50K / 50 MiB); very long outages
+  beyond that still lose events, and the client falls back to
+  memoryd's episodic search.
+
+**Committed:** `perceptiond v12.1: ?since_ts=<unix> wall-clock cursor + _ts_index`

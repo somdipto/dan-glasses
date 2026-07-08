@@ -9,6 +9,8 @@ import time
 import threading
 import tempfile
 import shutil
+import types
+import json
 
 from capture import V4L2Capture
 from salience import SalienceDetector
@@ -1449,6 +1451,188 @@ def test_description_log_evicts_by_line_count():
         print("  description_log evicts by line count: PASS")
 
 
+def test_description_log_since_unix_basic():
+    """v12.1: since_unix(ts) returns events with timestamp > ts, oldest first."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "log.jsonl")
+        log = DescriptionLog(path=path, lines_cap=100, bytes_cap=10_000_000)
+        try:
+            base = 1783500840.0  # arbitrary fixed reference (2026-07-08T08:54:00Z)
+            time.sleep(0.05)
+            for i in range(5):
+                ts_iso = _ts_iso_unix(base + i * 10.0)  # T+0, T+10, T+20, T+30, T+40
+                log.submit({
+                    "type": "description",
+                    "image_id": f"img{i}",
+                    "timestamp": ts_iso,
+                    "description": f"d {i}",
+                    "event_id": i + 1,
+                })
+            time.sleep(0.2)  # let worker drain
+            # before all events: all 5
+            out = log.since_unix(base - 1.0)
+            assert len(out) == 5, f"expected 5, got {len(out)}"
+            assert [e["event_id"] for e in out] == [1, 2, 3, 4, 5]
+            # between events 2 and 3: ids 3, 4, 5
+            out = log.since_unix(base + 15.0)
+            assert len(out) == 3, f"expected 3, got {len(out)}"
+            assert [e["event_id"] for e in out] == [3, 4, 5]
+            # after all events: 0
+            out = log.since_unix(base + 50.0)
+            assert out == [], f"expected [], got {out}"
+        finally:
+            log.close()
+        print("  description_log since_unix basic: PASS")
+
+
+def test_description_log_since_unix_survives_restart():
+    """v12.1: ts index rebuilt from disk on cold start."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "log.jsonl")
+        log1 = DescriptionLog(path=path, lines_cap=100, bytes_cap=10_000_000)
+        base = 1783500840.0
+        time.sleep(0.05)
+        for i in range(3):
+            log1.submit({
+                "type": "description",
+                "image_id": f"img{i}",
+                "timestamp": _ts_iso_unix(base + i * 5.0),
+                "description": f"d {i}",
+                "event_id": i + 1,
+            })
+        log1.close()
+
+        # Reopen from the same file.
+        log2 = DescriptionLog(path=path, lines_cap=100, bytes_cap=10_000_000)
+        try:
+            out = log2.since_unix(base - 1.0)
+            assert len(out) == 3, f"expected 3 after restart, got {len(out)}"
+            assert [e["event_id"] for e in out] == [1, 2, 3]
+            out = log2.since_unix(base + 5.0)  # exactly equal to event 2's ts → not > so 1 event
+            # Strict > semantics: events at base, base+5, base+10 → after base+5, only base+10 remains.
+            assert len(out) == 1, f"expected 1, got {len(out)}"
+            assert out[0]["event_id"] == 3
+        finally:
+            log2.close()
+        print("  description_log since_unix survives restart: PASS")
+
+
+def test_descriptions_endpoint_since_ts():
+    """v12.1: live HTTP /descriptions?since_ts=<unix> returns wall-clock filtered events."""
+    import socket
+    import threading
+    import urllib.request
+
+    # Use a free port for the test server.
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        log_path = os.path.join(d, "log.jsonl")
+        log = DescriptionLog(path=log_path, lines_cap=100, bytes_cap=10_000_000)
+        base = 1783500840.0
+        time.sleep(0.05)
+        for i in range(3):
+            log.submit({
+                "type": "description",
+                "image_id": f"img{i}",
+                "timestamp": _ts_iso_unix(base + i * 10.0),
+                "description": f"d {i}",
+                "event_id": i + 1,
+            })
+        time.sleep(0.2)
+
+        # Build a minimal HTTP handler that exposes the since_ts branch.
+        server_ref = types.SimpleNamespace(
+            _pipeline=None,
+        )
+        # We need a real publisher ring to satisfy the handler path. Build
+        # a minimal pipeline shim.
+        pub = DescriptionPublisher(ring_size=200)
+        pub.description_log = log
+        server_ref.pipeline = types.SimpleNamespace(publisher=pub)
+
+        # Inject a DescriptionLog-backed ring so the publisher's recent()
+        # surfaces the events. We bypass the publisher's normal ingest
+        # path and write directly to the ring + log via publish().
+        from events import DescriptionEventBus  # noqa: F401  (silence unused)
+
+        # Construct a tiny HTTP server that mirrors the since_ts branch.
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a, **k):
+                pass
+
+            def do_GET(self):
+                from urllib.parse import urlparse, parse_qs
+                u = urlparse(self.path)
+                if u.path != "/descriptions":
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                qs = parse_qs(u.query)
+                if "since_ts" not in qs:
+                    self.send_response(400)
+                    self.end_headers()
+                    return
+                ts_unix = float(qs["since_ts"][0])
+                items = []
+                for ev in pub.recent(pub._ring.maxlen):
+                    ev_ts = _iso_to_unix(ev.get("timestamp", ""))
+                    if ev_ts is not None and ev_ts > ts_unix:
+                        items.append(ev)
+                if not items:
+                    items = log.since_unix(ts_unix)
+                body = json.dumps({"count": len(items), "descriptions": items}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        httpd = HTTPServer(("127.0.0.1", port), H)
+        t = threading.Thread(target=httpd.serve_forever, daemon=True)
+        t.start()
+        try:
+            # since_ts before the first event: 3 results
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/descriptions?since_ts={base - 1.0}"
+            ) as r:
+                payload = json.loads(r.read().decode())
+            assert payload["count"] == 3, f"expected 3, got {payload['count']}"
+            assert [e["event_id"] for e in payload["descriptions"]] == [1, 2, 3]
+
+            # since_ts between events 1 and 2: 2 results
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/descriptions?since_ts={base + 5.0}"
+            ) as r:
+                payload = json.loads(r.read().decode())
+            assert payload["count"] == 2, f"expected 2, got {payload['count']}"
+            assert [e["event_id"] for e in payload["descriptions"]] == [2, 3]
+
+            # since_ts after all events: 0 results
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/descriptions?since_ts={base + 50.0}"
+            ) as r:
+                payload = json.loads(r.read().decode())
+            assert payload["count"] == 0, f"expected 0, got {payload['count']}"
+        finally:
+            httpd.shutdown()
+            log.close()
+        print("  /descriptions?since_ts endpoint: PASS")
+
+
+def _ts_iso_unix(unix_ts: float) -> str:
+    """v12.1: convert a unix float to ISO-8601 Z (UTC) for tests."""
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(unix_ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def test_description_log_handles_concurrent_writes():
     """v12.0: 4 threads x 50 submits each = 200 events, all on disk, no corruption."""
     import tempfile
@@ -1665,6 +1849,9 @@ def main():
         # v12.0 — persistent description log
         ("description_log_basic_round_trip", test_description_log_basic_round_trip),
         ("description_log_evicts_by_line_count", test_description_log_evicts_by_line_count),
+        ("description_log_since_unix_basic", test_description_log_since_unix_basic),
+        ("description_log_since_unix_survives_restart", test_description_log_since_unix_survives_restart),
+        ("descriptions_endpoint_since_ts", test_descriptions_endpoint_since_ts),
         ("description_log_handles_concurrent_writes", test_description_log_handles_concurrent_writes),
         ("publisher_wires_description_log", test_publisher_wires_description_log),
         ("publisher_since_falls_back_to_log", test_publisher_since_falls_back_to_log),

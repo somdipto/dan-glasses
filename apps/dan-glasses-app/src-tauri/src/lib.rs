@@ -307,12 +307,17 @@ async fn perception_set_mode(mode: String) -> Result<PerceptionModeResponse, Str
 async fn perception_descriptions(
     count: Option<u64>,
     since: Option<u64>,
+    // v12.1 — wall-clock cursor. Survives perceptiond restarts. Mutually
+    // exclusive with `since`; when both are passed, `since` wins.
+    since_ts: Option<f64>,
 ) -> Result<PerceptionDescriptionsResponse, String> {
     let n = count.unwrap_or(20).min(200);
     let client = perceptiond_client().map_err(|e| format!("client: {e}"))?;
     let mut q: Vec<(&str, String)> = vec![("count", n.to_string())];
     if let Some(s) = since {
         q.push(("since", s.to_string()));
+    } else if let Some(ts) = since_ts {
+        q.push(("since_ts", ts.to_string()));
     }
     let resp = client
         .get(format!("{PERCEPTIOND_URL}/descriptions"))
