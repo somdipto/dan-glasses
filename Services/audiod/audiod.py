@@ -22,6 +22,7 @@ from transcription import WhisperTranscriber
 from ptt import PTTTrigger
 from publish import TranscriptPublisher
 from segment_timing import SegmentTimingHistogram
+from metrics import LokiMetricsSink
 
 import http.server
 
@@ -214,7 +215,7 @@ class HealthHandler(http.server.BaseHTTPRequestHandler):
                 {"method": "GET",  "path": "/health",  "desc": "Liveness + readiness alias. Back-compat for callers predating /live + /ready. Returns {status:ok,service:audiod,readiness:{...}} or 503 + status:loading + reason when any component is not ready."},
                 {"method": "GET",  "path": "/live",    "desc": "Liveness probe. 200 + {status:alive,service:audiod,pid} as long as the HTTP server is up. Never 503 — readiness gaps go to /ready."},
                 {"method": "GET",  "path": "/ready",   "desc": "Readiness probe. 200 when VAD + whisper binary + whisper model + publisher are all initialized; 503 + readiness breakdown + reason otherwise. K8s readinessProbe shape."},
-                {"method": "GET",  "path": "/status",  "desc": "Full diagnostics: running flag, VAD ready, whisper_binary_ok / whisper_model_ok booleans (distinguish missing CLI from missing model), whisper model/threads, PTT, publisher, dropped segments, in-flight transcriptions, last_segment_ms, segment_timing (count/max/p50/p95/buckets), uptime."},
+                {"method": "GET",  "path": "/status",  "desc": "Full diagnostics: running flag, VAD ready, whisper_binary_ok / whisper_model_ok booleans (distinguish missing CLI from missing model), whisper model/threads, PTT, publisher, dropped segments, in-flight transcriptions, last_segment_ms, segment_timing (count/max/p50/p95/buckets), metrics (Loki sink counters, last push ts, pending), uptime."},
                 {"method": "GET",  "path": "/config",  "desc": "Current effective config (merged from config.yaml)."},
                 {"method": "GET",  "path": "/help",    "desc": "This surface."},
                 {"method": "POST", "path": "/start",   "desc": "Begin capture loop. Idempotent."},
@@ -255,6 +256,11 @@ def start_health_server(port: int = 8090):
     server = ReuseAddrHTTPServer(("0.0.0.0", port), HealthHandler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
+    # When port=0 is requested, replace it with the actually-bound
+    # port so callers can discover it. Stored on the server object
+    # so callers using port=0 still know where to connect.
+    if port == 0 and hasattr(server, "server_address"):
+        server.server_port = server.server_address[1]
     return server
 
 
@@ -284,6 +290,18 @@ class AudioPipeline:
         # Bounded ring of recent per-segment durations. Powers the
         # `segment_timing` block in /status (count, max, p50, p95, buckets).
         self._timing = SegmentTimingHistogram(capacity=256)
+        # Loki push sink for shipping structured metrics (currently
+        # `segment_timing` p50/p95/count). Configurable via the
+        # `metrics:` block; env vars AUDIOD_METRICS=0 and
+        # AUDIOD_LOKI_URL override at runtime. See metrics.py.
+        m_cfg = config.get("metrics", {})
+        self._metrics = LokiMetricsSink(
+            service="audiod",
+            loki_url=m_cfg.get("loki_url", "http://localhost:3100/loki/api/v1/push"),
+            interval_s=float(m_cfg.get("interval_s", 10.0)),
+            timeout_s=float(m_cfg.get("timeout_s", 2.0)),
+            enabled=m_cfg.get("enabled", None),
+        )
         self._process_thread: Optional[threading.Thread] = None
 
         # Cap on a single speech segment length. Prevents a stuck VAD
@@ -445,6 +463,24 @@ class AudioPipeline:
                 # own lock and we don't want a slow /status read to
                 # briefly hold up transcription.
                 self._timing.record(duration_ms)
+                # Ship the histogram snapshot to Loki. The sink is
+                # lock-free on the hot path; it just appends to a
+                # bounded buffer and a daemon thread does the POST.
+                # We always send a snapshot — even on a single
+                # segment — so the metric is live from the very
+                # first transcription.
+                snap = self._timing.snapshot()
+                self._metrics.observe(
+                    "segment_timing",
+                    {
+                        "p50_ms": int(snap.get("p50_ms", 0)),
+                        "p95_ms": int(snap.get("p95_ms", 0)),
+                        "max_ms": int(snap.get("max_ms", 0)),
+                        "min_ms": int(snap.get("min_ms", 0)),
+                        "count": int(snap.get("count", 0)),
+                    },
+                    unit="ms",
+                )
         except Exception as e:
             print(f"audiod: transcribe error: {e}", flush=True)
 
@@ -667,6 +703,7 @@ class AudioPipeline:
                 "last_segment_ms": self._last_segment_ms,
                 "max_segment_ms": self._max_segment_ms,
                 "segment_timing": self._timing.snapshot(),
+                "metrics": self._metrics.snapshot(),
                 "ptt_enabled": self._ptt_enabled,
                 "ptt_hotkey": self.config.get("push_to_talk", {}).get("hotkey", "space"),
                 "started_at_ms": self._started_at_ms,
@@ -717,11 +754,25 @@ class AudioPipeline:
         stop() to halt it. The legacy CLI path used to block here; the
         HTTP control plane depends on the non-blocking behavior.
         """
+        # Start the metrics sink before the pipeline loop so the
+        # very first segment is shipped. The sink is idempotent —
+        # a second start() is a no-op.
+        try:
+            self._metrics.start()
+        except Exception as e:  # noqa: BLE001
+            print(f"audiod: metrics sink start failed: {e}", flush=True)
         return self._cmd_start()
 
     def stop(self):
         """Stop the audio pipeline and close the publisher."""
         self._cmd_stop()
+        # Drain any in-flight metrics. Best-effort; never blocks
+        # the shutdown handshake for more than the sink's join
+        # timeout.
+        try:
+            self._metrics.stop()
+        except Exception as e:  # noqa: BLE001
+            print(f"audiod: metrics sink stop failed: {e}", flush=True)
         self.publisher.close()
 
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import './MemoryPanel.css';
+import { SERVICE_URLS } from '../lib/services';
 
 type MemoryType = 'episodic' | 'semantic' | 'procedural';
 
@@ -15,7 +16,7 @@ interface MemoryPanelProps {
   baseUrl?: string;
 }
 
-export default function MemoryPanel({ baseUrl = 'http://localhost:8741' }: MemoryPanelProps) {
+export default function MemoryPanel({ baseUrl = SERVICE_URLS.memoryd }: MemoryPanelProps) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<MemoryRow[]>([]);
   const [storeType, setStoreType] = useState<MemoryType>('episodic');

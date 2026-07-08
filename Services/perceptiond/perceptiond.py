@@ -120,12 +120,19 @@ class PerceptionPipeline:
         # is False or `url` is empty.
         sink_cfg = config.get("memory_sink", {}) or {}
         sink_enabled = bool(sink_cfg.get("enabled", True)) and bool(sink_cfg.get("url"))
+        log_cfg = config.get("description_log", {}) or {}
+        log_enabled = bool(log_cfg.get("enabled", True))
         self.publisher = DescriptionPublisher(
             mode=pub_cfg.get("mode", "stdout"),
             socket_path=pub_cfg.get("socket_path", "/var/run/perceptiond.sock"),
             memory_sink_url=sink_cfg.get("url") if sink_enabled else None,
             memory_sink_timeout=float(sink_cfg.get("timeout", 2.0)),
             memory_sink_queue_cap=int(sink_cfg.get("queue_cap", 256)),
+            # v12.0: durable description log. None path means "use the
+            # default" — DescriptionLog expands `~/.cache/...`.
+            description_log_path=(log_cfg.get("path") if log_enabled else None) or None,
+            description_log_lines_cap=int(log_cfg.get("lines_cap", 50000)),
+            description_log_bytes_cap=int(log_cfg.get("bytes_cap", 50 * 1024 * 1024)),
         )
 
         # HTTP server (for health/status checks) - TCP on 8092 + Unix socket
@@ -404,6 +411,11 @@ class PerceptionPipeline:
             base["image_store"] = self.frame_store.stats()
         except Exception:
             pass
+        # v12.0 — durable description log counters
+        try:
+            base["description_log"] = self.publisher.description_log.stats() if self.publisher else {}
+        except Exception:
+            pass
         return base
 
     def get_detailed_status(self) -> dict:
@@ -442,6 +454,11 @@ class PerceptionPipeline:
         # v10.0 — persistent image-store counters
         try:
             base["image_store"] = self.frame_store.stats()
+        except Exception:
+            pass
+        # v12.0 — durable description log counters
+        try:
+            base["description_log"] = self.publisher.description_log.stats() if self.publisher else {}
         except Exception:
             pass
         return base

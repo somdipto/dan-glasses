@@ -1,321 +1,225 @@
-# Danlab AGI Roadmap — 6 / 12 / 24 Months
-**Author:** Dan2 (co-founder, lead scientist, architect)
-**Date:** 2026-06-17
-**Inputs:** `dan2-research-report.md` (v6, 2026-06-17), `dan2-architecture-review.md` (v6), `dan2-model-analysis.md` (v6), canonical Dan Glasses spec, danlab-multimodal README, paperclip AGENTS.md, blurr README.
-**North Star:** Build always-on, on-device, privacy-preserving multimodal intelligence that genuinely learns from experience. Ship it as a wearable (Dan Glasses), an open platform (dani), and a multi-agent org (paperclip / DanClaw).
+# Danlab AGI Roadmap v6 — 6/12/24 Month Plan
 
-**v6 deltas from v5:**
-- **HRM-Text 1B added** to the on-device LLM lineup (released 2026-05-18, the day after v5 was finalized). Two-model pipeline: LFM2.5-VL-450M (vision) + HRM-Text 1B (reasoning).
-- **Anthropic's "brake pedal" call (2026-06-04)** absorbed as a positioning signal — on-device + open + auditable is the right side of the debate.
-- **Proactive AI promoted from roadmap item to v1.5 architecture addition.** PRISM + Microsoft Research trigger encoder is the right pattern.
-- **Tethered-glasses path (CoVSpec + phone) added** as a v1.5 architecture option, in case Redax slips.
-- **Memory architecture** updated to reflect the Maturation 2026 landscape (MemX, MemMachine, Memanto, AriadneMem, TeleMem, CraniMem).
-- **Self-improvement landscape** updated with RHO, HarnessX, Self-Harness, HarnessForge, AHE — SIA is no longer alone.
+**Author:** Dan2 (Research Agent) | **Date:** 2026-06-24 11:30 IST
+**Status:** v6 — supersedes v1–v5
+**Companion to:** `dan2-research-report.v6.md`, `dan2-architecture-review.v6.md`
+
+> v6 north star: **Reliability is the new capability. Submit a reliability-aware audiod confidence-calibration RL agent to AIE-Bench + SEAGym by Sep 30, 2026.** Anthropic's Jun 4 2026 call for a global pause on recursive self-improvement makes this *the* timely contribution. Memory is engineering (memoryd v2). Smart glasses is commodity (Meta Glasses $299, Snap Specs $2,195, Google Android XR fall 2026). Danlab wins on **reliability + proactivity + on-device-first + India-cost**.
 
 ---
 
-## Strategic Frame
+## 6-month plan (Jul – Dec 2026) — the verifiable reliability era
 
-Three things must be true for Danlab to make a real AGI contribution from India by 2028:
+**North star:** audiod calibration RL agent with ECE < 0.05 on Librispeech + ECE < 0.10 on CommonVoice Indian-accent English (OOD). AIE-Bench + SEAGym submission. arXiv pre-print Aug 15, 2026. Failure-mode registry live. Operative-context surface live.
 
-1. **Hardware in hand.** No roadmap survives without a target. The Redax board is the bottleneck. If it doesn't ship in Q3 2026, **spec the tethered path** (existing glasses + phone running CoVSpec) as the v1.5 default, with the standalone path as v2.
-2. **A defensible niche.** Frontier labs own 70%+ of the general capability surface. We win on **on-device multimodal + privacy + always-on context + Indian-language coverage + auditable self-improvement**. That is the niche. Everything outside it is distraction.
-3. **A self-improving loop that is *actually* self-improving.** Not a hand-coded heuristic. The 2026 landscape (SIA, RHO, HarnessX, Self-Harness, HarnessForge, AHE) gives us multiple credible paths. Pick one and ship the ablation.
+### Q3 (Jul – Sep 2026)
 
----
+1. **audiod calibration RL loop** (12 weeks: 6 build + 6 eval) — Deep Dive A in research report
+   - Fork SIA (Hexo Labs, MIT) or implement GRPO from scratch
+   - 4-layer MLP calibration head on frozen whisper.cpp base.en encoder
+   - Failure-mode registry: `failure_class ∈ {silence, music_overlap, OOD_accent, low_SNR, hallucinated_token}`
+   - Eval: Brier + ECE on Librispeech, CommonVoice, TED-LIUM
+   - **Target:** ECE < 0.05 on Librispeech test-clean, ECE < 0.10 on CommonVoice Indian-accent English (OOD)
+   - **Early-stop:** arXiv 2606.21090 rise-and-collapse pattern — track ES (early-stop rule from CARE) and GRPO + ES combination
+   - **Submission target:** AIE-Bench (ICML 2026) + SEAGym by Sep 30, 2026
+   - **arXiv pre-print:** Aug 15, 2026
 
-## 6-Month Plan (Jun 2026 → Dec 2026) — "Ship the wearable, prove the platform"
+2. **memoryd v2 (AEL + DPCM + LLM-Wiki + operative_context) rebuild** (8 weeks, parallel) — Deep Dive C
+   - int8 quantization (4× memory win)
+   - DPCM doubly-linked provenance graph
+   - AEL fast Thompson bandit over {semantic, episodic, procedural, graph, reranked} modes
+   - Slow LLM reflection (nightly, opt-in)
+   - LLM-Wiki reconsolidation (nightly, async, low-priority)
+   - **operative_context table** (NEW v6) — what actually drives behavior
+   - OpenClaw-memory-compatible adapter (ecosystem composability)
+   - **Submit to LongMemEval + PersonaMem-v2** by Sep 30
 
-**Theme:** Get Dan Glasses v1 into real hands. Get paperclip (now DanClaw) re-animated. Get a real self-improvement experiment running in danlab-multimodal. Promote the proactive layer to v1.5 architecture.
+3. **ttsd v2 — KittenTTS → Kokoro-82M swap** (1 week, parallel)
+   - Apache 2.0 license, 21 voices, 24kHz, MOS 4.45, 327MB, runs on Raspberry Pi
+   - 210× real-time on RTX 4090, sub-20ms TTFA on warm cache
+   - Multi-engine router (Kokoro for English, Piper for non-English, MisoTTS for batch)
+   - WebGPU in-browser option for v1.5 Tauri webview
+   - **Deploy by Jul 15, 2026** (1-week decision, not a research project)
 
-### Hardware / wearable (Track B unblock)
-- **Resolve the Redax situation.** If hardware ships in Q3, port Dan Glasses to it (aarch64 rebuild, not rewrite — Tauri code is portable). If it slips, **ship the tethered path**: Brilliant Labs Frame + USB-C compute puck (Raspberry Pi 5 8GB or Snapdragon Dev Kit) + CoVSpec with LFM2.5-VL-450M on the phone. This gets us in the field without waiting.
-- **Define a real power budget.** Measure every component on the actual target. Stop using "5–10 W" as a planning number. Concrete targets:
-  - sleep (camera off, mic ready, wake on voice trigger): **<0.3 W**
-  - idle (camera on, no VLM): **<0.8 W**
-  - watchful (salience-gated VLM, 1 inference / 3 s avg, VLCache + VisionTrim): **<1.5 W**
-  - active (continuous VLM, LLM on demand): **<3.0 W peak**
-  - **HRM-Text 1B on-device reasoning burst:** <0.2 W (per-call, latent reasoning, no CoT burn)
-- **Battery target:** 4 h mixed-use at the watchful budget. If unachievable, target 2 h and document the tradeoff.
-- **Weight target:** **<50 g** including temples, camera, battery. The Brilliant Labs Frame at 39 g and Ray-Ban Meta at 49 g set the bar.
-- **Wake-word service (`wakewordd`).** openWakeWord first, Porcupine if accuracy is bad. Promote from v3 to v1.1.
+4. **VLM eval: LFM2.5-VL-450M vs OmniVLM-968M vs Gemma 3 4B** (2 weeks, parallel)
+   - Run on perceptiond's existing test set
+   - Measure watchful-mode queue depth + battery proxy
+   - Apply V5e-0 self-speculative decoding (1.89× speedup, OpenReview 2026)
+   - Eval CondenseVLM token condensation (training-free)
+   - Decision by Aug 1, 2026; swap by Oct 1, 2026
+   - **Default v2 wearable: OmniVLM-968M Q4_K_M** (9× token compression, ~1.1s/frame)
 
-### Software / platform
-- **Memory architecture v1.5** (memoryd): add **temporal + confidence** metadata to every embedding; Ebbinghaus-style confidence decay; 4-signal score (semantic × temporal × confidence × relational). Plus BM25 + RRF, plus `memory_links` table (7 relation types from MemX). 2-week change to memoryd. The single biggest credibility upgrade.
-- **HRM-Text 1B integration.** Spec the LFM2.5-VL-450M (vision) → text description → memoryd retrieval → HRM-Text 1B (reasoning) → response → KittenTTS (speech) pipeline. Two-model architecture, documented in AGENTS.md.
-- **RHO (Retrospective Harness Optimization) pilot** in danlab-multimodal. RHO improves harnesses from past trajectories with **no labels** — single pass, no human data. If it improves on the heuristic, we have a publishable result *and* a real self-improvement primitive.[^rho]
-- **VLCache + VisionTrim wiring** in perceptiond. Drop-in, 1 week. Targets 3–5× VLM speedup on x86_64, more on aarch64+NPU.
-- **Streaming KittenTTS** for sub-second first-audio latency.
-- **Proactive trigger layer** in OpenClaw: Microsoft Research graph encoder (220 MiB BF16, on-device) + PRISM gate. **This is the v1.5 differentiator.** No other wearable has this.
-- **Prompt injection hardening** on the perception → os-toold path. The canonical analysis flagged this. Synthius-Mem's adversarial robustness work (99.6%) shows the bar. Cheap mitigation: argument-hashing + denylist extension + a perception-frame trust score.
-- **paperclip → DanClaw reactivation.** It's dormant (per its AGENTS.md). Re-orient it as the **multi-agent company orchestrator** that drives Dan Glasses: the gateway through which Dan (the AI co-founder) operates the company (issue tracking, goal mgmt, deployment infra). Keep the cool name. Keep the rail guard (policies, per-agent tool filtering).
+5. **Power-state machine on every daemon** (3 weeks, parallel)
+   - Global `power_state` enum (`wakeful|watchful|drowsy|asleep`)
+   - OpenClaw-coordinated transitions via heartbeat
+   - perceptiond: `idle` actually unloads the VLM from RAM
+   - audiod: `asleep` parks the capture thread
+   - Deploy by Aug 15, 2026
 
-### Research / open-source contributions
-- **Publish the SmolVLM-256M ↔ LFM2.5-VL-450M comparison on Indian-language OCR.** Nobody has done this credibly. danlab-multimodal is the natural home.
-- **Open-source `dan-lab/wakewordd` and `dan-lab/memoryd`** separately from the dan-glasses repo. These are reusable primitives. The "world's best skills library" framing from dani-skills applies here.
-- **Safety paper draft:** "An Open-Source, On-Device Defense Against Cross-Modal Prompt Injection for AI Wearables." Target: USENIX Security 2027. The perception-frame trust score + argument-hashing + two-channel execution combo is the contribution.
+6. **rewardsd (NEW service, AIE-Bench + SEAGym integration)** (2 weeks, parallel)
+   - Ingests `(task, action, signal)` tuples
+   - Produces learned policies
+   - AIE-Bench harness integration
+   - SEAGym harness integration (Terminal-Bench 2.0 + HLE)
+   - Failure-mode registry write access
+   - Deploy by Aug 30, 2026
 
-### Success criteria (Dec 2026)
-- [ ] Dan Glasses v1 demoable end-to-end (audio + vision + memory + tool use) on target hardware (Redax **or** tethered path).
-- [ ] Battery life measured and published in spec.
-- [ ] memoryd v1.5 deployed with temporal + confidence + relational scoring + BM25 + memory_links.
-- [ ] HRM-Text 1B integrated and benchmarked against LFM2-1.2B-Thinking baseline.
-- [ ] VLCache + VisionTrim wired in perceptiond.
-- [ ] Proactive trigger layer live in OpenClaw.
-- [ ] danlab-multimodal v2 with RHO (label-free retrospective harness optimization).
-- [ ] paperclip-DanClaw gateway revived with at least 2 live agents.
+7. **proactived (NEW service)** (3 weeks, parallel)
+   - Calendar (CalDAV or Google Calendar) + location (opt-in) + time + email fusion
+   - Reads operative_context from memoryd
+   - Reads reliability from audiod (gates nudges during failure-mode events)
+   - Outputs nudges to ttsd
+   - OpenClaw tool exposure: `dan_proactive_*`
+   - Deploy by Sep 15, 2026
 
----
+8. **Show HN Aug 25** + India press placements (per Dan1 v82)
+9. **arXiv pre-print by Aug 15** — audiod calibration RL + memoryd v2 + reliability framing
+10. **First ICLR 2027 workshop submission by Sep 30** — "Reliability-Aware Self-Revising Agents for On-Device AI"
 
-## 12-Month Plan (Jun 2026 → Jun 2027) — "Make it learn, make it safe, make it proactive"
+### Q4 (Oct – Dec 2026)
 
-**Theme:** Move from "always-on wearable" to "always-on wearable that learns and initiates." Add the dual-process memory, the test-time self-improvement, the real proactive AI, and the cross-modal safety story.
+11. **Self-improving Paperclip agent** (6 weeks) — apply Socratic-SWE-style trace-derived skills pattern to paperclip's tool-calling substrate
+12. **Open eval repo (dglabs-eval)** — public benchmark for audiod calibration + perceptiond salience + memoryd recall (AEL modes) + operative_context selection
+13. **Hindi / multilingual support** — swap whisper-large-v3-turbo or SeamlessM4T-v2 for Indian-accent English + Hindi; eval SmolVLM-256M-Instruct multilingual vs Gemma 3 nano
+14. **NDP200 wake-word integration** (per GAP_ANALYSIS.md) — on-device "Hey Dan"
+15. **Hardware privacy switch** — camera off, mic off, LED configurable (v1.5 PCB)
+16. **Dev-kit pre-orders Oct 25** (per Dan1 v82) + first 100 dev-kits shipped (India)
+17. **AWS Bedrock AgentCore vs OpenClaw benchmark** — public numbers
+18. **Tauri native bundle** — `cargo tauri build` for `.deb`/`.AppImage` (deferred from v5, hardware-target-dependent)
 
-### Self-improvement — past heuristic, into real RL
-- **RHO in production (danlab-multimodal v2.5).** No labels, single pass, no human data. Already a primitive by Dec 2026; promote to the primary harness-optimizer by Q2 2027.
-- **TT-SI in production (danlab-multimodal v3).** Three steps: self-awareness (which descriptions are weak?), self-data augmentation (generate similar queries), test-time training (small LoRA on the weak areas). Target: 5–10% absolute gain on a held-out eval of "describe this screen" quality.
-- **Fork SIA** (Hexo Labs, MIT, May 2026) and integrate as a harness. The SIA framework is the *credible* open path to harness+weights self-improvement. The Feedback-Agent becomes a smaller HRM-Text 1B or LFM2-1.2B-Thinking. Until this ships in danlab-multimodal, the project keeps the "pre-RL scaffold" label — and that is correct.
-- **HarnessForge / AHE (Agentic Harness Engineering) pilot.** These are alternatives to SIA that focus on harness-only or joint harness+policy evolution. Evaluate against SIA on the same eval suite. Pick the best.
-- **Published ablation:** heuristic vs. RHO vs. learned reward model vs. TT-SI vs. SIA-fork. Five configurations, same eval, same data. This is the contribution to the field.
+### Success criteria (6 months)
 
-### Memory — dual-process, schema-inducing, multi-layer
-- **Memory v2 (DPA / DPCM / MemMachine / Memanto hybrid):** two processes:
-  - **Daytime writer** (synchronous, fast): records belief revisions as doubly-linked "supersedes" chains.
-  - **Nighttime engine** (async, batched): induces schemas, intentions, cross-domain abstractions; detects collisions.
-- **TiMem-style Temporal Memory Tree** on top: hierarchy of (raw events → episodic → semantic → procedural → schema).
-- **Memori-style triples** + **MemMachine three-layer** for production shape.
-- **Adversarial-robust memory** (Synthius-Mem lessons): CategoryRAG with hallucination resistance > 99%.
-- **LoCoMo benchmark eval.** 75–95% range is where 2026 SOTA lives (Memanto, APEX-MEM). We should be in that range by Q4 2026.
-
-### Proactive AI — the v1.5 differentiator, v1.7 production
-- **Proactive trigger layer (Dec 2026).** Microsoft Research graph encoder + PRISM gate, in OpenClaw.
-- **PRISM slow-reasoning pass (Q1 2027).** HRM-Text 1B fires when p_trigger is near the decision boundary. <5% of all events.
-- **ProAgentBench + ContextAgentBench evaluation.** Public benchmarks, 28,000+ events from real user activity. Validate against prior work.
-- **Sensible Agent patterns (UMD 2026) — modality choice** when the trigger fires: visual vs. audio vs. silent icon. **Don't always speak.**
-- **Daily briefing agent.** Calendar + email + recent memories → 60-second spoken summary. The "killer app" for an always-on wearable.
-- **Pro2Bench / EgoProactive evaluation.** Egocentric proactive dataset for "off-plan" recovery — the user changed their mind. How does the system handle it?
-
-### Privacy + safety — make it a moat
-- **DPDP Act + EU AI Act compliance audit.** India DPDP and EU AI Act are both tightening in 2026. **On-device-only is a compliance advantage.** Document it.
-- **Federated fine-tuning** for user-specific memory: each user's memories fine-tune their own model adapter (LoRA), never the central model. This is the privacy story.
-- **Perception-frame trust score** in perceptiond: scored by visual coherence, content type, prompt-injection risk. Below threshold → no tool execution.
-- **Anthropic "brake pedal" alignment.** Jack Clark's June 4 call[^anthropic_brake] is asking for exactly what we're building. Public positioning as the "open, auditable, on-device alternative" is a brand asset, not just a technical position.
-- **Safety paper submission (USENIX Security 2027).** Cross-modal prompt injection defense for AI wearables.
-
-### Success criteria (Jun 2027)
-- [ ] danlab-multimodal v3 with TT-SI in production, published eval.
-- [ ] RHO + SIA-fork both shipped, with ablation.
-- [ ] Memory v2 (dual-process + three-layer + triples) deployed; LoCoMo in SOTA range.
-- [ ] Proactive trigger layer live in OpenClaw; PRISM slow-pass on HRM-Text 1B.
-- [ ] Daily briefing agent demoable.
-- [ ] Dan Glasses v1.5 shipped to ≥10 pilot users (likely ourselves + 9 testers in Bengaluru).
-- [ ] Safety paper accepted at USENIX Security or equivalent.
-- [ ] DanClaw multi-agent orchestrator running the company.
+- [ ] ECE on audiod calibration < 0.05 on Librispeech test-clean
+- [ ] ECE < 0.10 on CommonVoice Indian-accent English (OOD)
+- [ ] **AIE-Bench + SEAGym submission with audiod agent scoring top quartile**
+- [ ] arXiv pre-print published Aug 15, 2026
+- [ ] **memoryd v2 deployed** with AEL + DPCM + LLM-Wiki + operative_context + OpenClaw-memory adapter
+- [ ] OmniVLM-968M OR Gemma 3 4B live in perceptiond, inference <2s/frame
+- [ ] **Kokoro-82M live in ttsd, sub-20ms TTFA**
+- [ ] rewardsd live, AIE-Bench + SEAGym integration verified
+- [ ] proactived live, audiod-reliability-gated
+- [ ] Power-state machine on every daemon
+- [ ] Failure-mode registry live
+- [ ] `/reliability` endpoint on every daemon
+- [ ] Show HN top-10 of the day
+- [ ] Dev-kit pre-orders ≥ 100 (India) or $5K MRR
 
 ---
 
-## 24-Month Plan (Jun 2026 → Jun 2028) — "Make it co-evolve with the user"
+## 12-month plan (Jul 2026 – Jun 2027) — the on-device on-wearable era
 
-**Theme:** From "personal assistant" to "personal intelligence that co-evolves." This is where Danlab's contribution to AGI gets sharp.
+**North star:** ship a hardware-tethered v1.5 of Dan Glasses with on-device VLM, on-device wake word, on-device AEL-shaped memory, on-device reliability-aware audiod. Meta Glasses at $299 (Jun 22 2026, Muse Spark, 14 languages incl. Hindi/Japanese/Mandarin/Korean, 8h battery), Google Android XR fall 2026, Apple AirPods+glasses (Bloomberg), Microsoft Scout (built on OpenClaw), Snap Specs standalone ($2,195, Jun 16 2026) — Dan Glasses must win on **reliability + proactivity + on-device-first + India-cost**.
 
-### AGI-shaped research bets
-- **Recurrent latent reasoning (RLRP, ICLR 2026) in the on-device LLM.** Internal latent refinement, not external CoT. Compatible with our current llama.cpp stack. This is the path to "reasoning at the edge" without burning tokens. **HRM-Text 1B is the prototype; RLRP papers extend it.**
-- **Operator-consistent RL (Op-RL)** for the personal agent: train the user-facing agent to *be* the improvement operator — generate draft, distill, refine — rather than just a single-pass generator. PDR-style.
-- **Tiny Recursive Models (TRM)** as the policy backbone for some sub-tasks. The 2026 work on unrolled policy iteration for TRMs is the most promising small-model RL setup I've seen.
-- **Skill banks (SkillRL, ICLR 2026 workshop):** a hierarchical library of reusable skills discovered through experience. This is how you get "knows your workflow" without a 100B-param model.
-- **Self-evolving agent loop (DPA / DPCM):** the System 1 / System 2 dual-process design from the 2026 memory literature, applied to the *whole agent*, not just memory.
-- **HRM-Text post-training.** Sapient released HRM-Text 1B as a base, pre-trained model. **The 24-month play is to fine-tune HRM-Text for "reason over my memories" — a personalized reasoning model that lives on the wearable, trained on the user's own retrievals.**
-- **HarnessForge-style joint harness+policy evolution** as the production self-improvement loop. Don't just evolve the harness; evolve the harness-policy pair.
+### Q1 2027 (Jan – Mar)
 
-### Platform bets
-- **dani as the world's best agent skills library** is a real positioning play. Every piece of Dan Glasses code should be releasable as a skill. The "world's best skills library" tagline from the dani repo is achievable if we treat every architecture decision as a primitive someone else will use.
-- **Open-weights release** of:
-  - HRM-Text 1B fine-tuned for "reason over my memories" (if results hold)
-  - LFM2.5-VL fine-tuned for Indian-language OCR (if results hold)
-  - A "Dan Glasses prompt-injection defense" model
-  - A DanClaw agent harness
-- **Indie hardware path.** If Redax is a dead end, we have to design our own. 6-month clock on that decision (must be made by Dec 2026).
-- **Compliance + certification.** DPDP Act compliance is a moat. EU AI Act high-risk system certification (if we ever cross into biometric/identification territory) is a moat. Plan for it now.
+19. **Hardware v1.5 prototype**
+    - 400-450mAh battery (15-20hr)
+    - JBD MicroLED single-eye display
+    - 8MP camera (opt-in, hardware privacy switch)
+20. **visiond v2** — VLM with proactive salience (perceptiond → visiond rename + new capabilities)
+    - Trigger on "Hey Dan" wake word (NDP200)
+    - Push-to-talk or wake-word activation
+    - On-device VLM via OmniVLM-968M quantized to NPU
+21. **proactived v2** — calendar + location + time + email fusion (Anthropic Dynamic Workflows pattern)
+    - "Focus Mode" — user opt-in, speech-gated
+    - Operative-context-aware (proactived only nudges when operative_context is high-confidence)
+22. **memoryd v3** — federated learning opt-in (H-FedSL pattern)
+    - Gradient sharing, no raw data ever leaves device
+    - Federated calibration of audiod confidence head
+23. **Public security audit** of memoryd v2 + proactived (third-party)
+24. **ICLR 2027 Workshop on RSI** — submit paper on audiod calibration + memoryd v3 + operative_context
 
-### Hiring + organization
-- **Research scientist** focused on self-improvement / RL — single highest-leverage hire. SIA / RHO / HarnessForge is the right resume.
-- **Embedded systems engineer** for the actual wearable path.
-- **Hindi/Tamil/Bengali linguist** for the Indian-language bet.
-- **OSS maintainer** for dani-skills (this is the distribution channel).
-- **Safety engineer** for the cross-modal prompt injection / perception-frame trust work.
+### Q2 2027 (Apr – Jun)
 
-### Success criteria (Jun 2028)
-- [ ] Dan Glasses v2 with self-improving memory and proactive trigger layer shipping as a product.
-- [ ] At least 2 open-source releases with measurable adoption (target: dan-lab repos ≥ 5k stars each).
-- [ ] A published paper from danlab at a major venue (NeurIPS / ICML / ICLR / USENIX Security). Likely target: edge self-improvement, memory architecture, or cross-modal safety.
-- [ ] dani-skills: 50+ production-grade skills in the catalog.
-- [ ] A demonstrable co-evolution loop: the assistant's behavior demonstrably changes based on accumulated user-specific memory, in a way that's auditable.
-- [ ] An HRM-Text 1B derivative fine-tuned for "reason over my memories" — open-weights release.
+25. **Dani integration** — audiod agent and memoryd v2 ship as Dani skills
+26. **HRM-Text-1B evaluation** — train and eval on Danlab's task suite, compare to LFM2.5-1.2B-Thinking. HRM-Text 1B is 84.5% GSM8K (NOT 84.7%), $1,500 training, May 18 2026 release, fully open-sourced (Sapient).
+27. **Edge NPU bringup** — port OmniVLM-968M and HRM-Text-1B to Redax NPU
+28. **Multilingual VLM eval** — SmolVLM-256M-Instruct multilingual vs Gemma 3 nano for Hindi
+29. **OSS contribution** — contribute DPCM-inspired memoryd patterns back to OpenClaw as a plugin
+30. **Dev-kit v2 production run** — 1,000 units for India + SEA
+31. **Partnership or acquisition conversation** with Even Realities (only proactive AI competitor) OR with an Indian OEM (Tata, Reliance, Ola Electric)
 
----
+### Success criteria (12 months)
 
-## What to stop doing
-
-- ❌ **Calling the danlab-multimodal feedback loop "RL."** It is a heuristic. Until harness+weights are open, the label stays pre-RL. This is the integrity call.
-- ❌ **Building paperclip-style company infrastructure that doesn't drive a product.** Paperclip's value is as the orchestrator for Dan Glasses / dani. If it's not in that loop, it's dead weight.
-- ❌ **Hand-rolling more Python daemons when OpenClaw can host the logic.** The 5-daemon split is right for the hot path (audio, vision, memory, tools, tts) but new logic should go in OpenClaw agents unless it has clear latency / safety requirements.
-- ❌ **Optimizing for x86_64 laptop performance** beyond "good enough to demo." Every Watt we save on aarch64 matters 100× more.
-- ❌ **Conflating LFM2.5-VL-450M and HRM-Text 1B.** Two models, one pipeline, two different jobs. Document the split.
-- ❌ **Waiting on Redax.** Spec the tethered path now. Ship the v1.5 demo on Brilliant Labs Frame + Raspberry Pi 5 + CoVSpec. If Redax ships, port. If not, we have a product.
+- [ ] Hardware v1.5 prototype functional, 15hr+ battery
+- [ ] On-device VLM <2s/frame on Redax NPU
+- [ ] proactived v2 live, Focus Mode shipped
+- [ ] memoryd v3 federated, opt-in
+- [ ] HRM-Text-1B evaluated against LFM2.5-1.2B-Thinking baseline
+- [ ] 2 ICLR/NeurIPS workshop submissions
+- [ ] 2 arXiv pre-prints
+- [ ] Dev-kit v2 production run (1,000 units)
+- [ ] $20K MRR or 500 dev-kit pre-orders
+- [ ] Public security audit published
 
 ---
 
-## Risks (load-bearing)
+## 24-month plan (Jul 2026 – Jun 2028) — the AGI thesis era
 
-| Risk | Severity | Mitigation |
-|------|----------|------------|
-| Redax hardware slips / dies | Critical | Tethered-glasses path (CoVSpec); indie hardware if necessary |
-| Frontier model commoditizes our edge advantage | High | Lean harder on privacy, Indian-language coverage, always-on context, auditable self-improvement |
-| HRM-Text 1B doesn't pan out | Medium | Fall back to LFM2-1.2B-Thinking; same pipeline |
-| Self-improvement doesn't beat the heuristic in 12 months | Medium | Honest publish. Negative results are still science. |
-| RHO + SIA-fork require labels we can't get | Medium | RHO is label-free by design; SIA can use the heuristic as a weak reward |
-| India DPDP / EU AI Act compliance becomes a moat-instead-of-moat | Medium | Document the on-device design; certify if required |
-| Anthropic / OpenAI publishes on-device multimodal first | Medium | Lean harder on auditable + open + Indian-language + self-improvement |
-| Key person dependency on somdipto | High | dani as the persistent memory of the org + this AGENTS.md system |
-| Proactive AI is annoying in practice | High | PRISM gate. 22.8% fewer false alarms. Festina Lente. |
+**North star:** publish a credible "audited, on-device, on-wearable, self-improving, reliability-aware" AGI thesis. Use the two years to integrate HRM-Text, OmniVLM-968M, AEL-shaped memory, SIA-style self-improvement, operative-context-aware proactived, and reliability-aware predictions into a single coherent system with public evaluations and a public safety audit.
 
----
+### H2 2027 (Jul – Dec)
 
-## One-line summary
+32. **Dani v2 — self-improving agent platform**
+    - SIA fork integrated
+    - Audiod agent, memoryd v3, paperclip agent as Dani skills
+    - Public eval suite (dglabs-eval) v2
+33. **HRM-Text-2B on-device** — train and quantize for Redax NPU. ($1,500 training cost basis suggests scaling beyond 1B is feasible with curated data.)
+34. **memoryd v4 — cross-agent memory sharing** with provenance graph
+35. **proactived v3 — calendar + email + voice intent fusion + proactive outreach (Focus Mode)**
+36. **NeurIPS 2027 workshop submission** — "On-Device Self-Improving AI Wearables"
+37. **First 10K units shipped** to India + SEA
 
-**Ship the wearable (tethered or standalone), prove the platform, teach it to learn (RHO → TT-SI → SIA), teach it to initiate (proactive trigger + PRISM), and stay ruthlessly honest about what's heuristic and what's RL.**
+### H1 2028 (Jan – Jun)
 
----
+38. **Dani v3 — multi-agent orchestration** with Anthropic Dynamic Workflows pattern (executable JS orchestration)
+39. **HRM-Text + LFM2.5 ensemble** — task routing by complexity
+40. **Public third-party safety audit** of the full self-improvement loop (per Anthropic Jun 4 2026 pause proposal — Danlab's response is "audited self-improvement beats unverified acceleration")
+41. **International expansion** — Japan, EU, US pilots
+42. **NeurIPS 2028 main track submission** — "Audited Self-Improving Reliability Agents for Wearable AI"
+43. **Series A or strategic partnership** with an Indian OEM (Tata, Reliance, Ola Electric) or Even Realities
 
-## Footnotes
+### Success criteria (24 months)
 
-[^rho]: RHO: Evolving Agents in the Dark: Retrospective Harness Optimization via Self-Preference. arXiv:2606.05922. https://arxiv.org/html/2606.05922v2
-[^anthropic_brake]: Reuters — Anthropic says AI labs need coordinated plan to halt development if risks rise. 2026-06-04. https://www.reuters.com/business/anthropic-says-ai-labs-need-coordinated-plan-halt-development-if-risks-rise-2026-06-04/
-
----
-
-*👾* Roadmap sharpened for 2026-06-17. v6 deltas: HRM-Text 1B added to the model lineup, proactive layer promoted to v1.5 architecture, tethered path added as a Redax-fallback, self-improvement landscape expanded (RHO, HarnessX, Self-Harness, HarnessForge, AHE), Anthropic brake-pedal signal absorbed as a positioning moat.
-rid):** three layers:
-  - **Daytime writer** (synchronous, fast): records belief revisions as doubly-linked "supersedes" chains. Uses RRF over vector + BM25 + memory_links graph.
-  - **Nighttime engine** (async, batched): induces schemas, intentions, cross-domain abstractions; detects collisions. Runs on HRM-Text 1B.
-  - **Retrieval-time gate** (MemGate-style 9M-param MLP): filters out stale, off-topic, or unsafe memories before they hit the LLM context.
-- **TiMem-style Temporal Memory Tree** on top: hierarchy of (raw events → episodic → semantic → procedural → schema).
-- **Adversarial-robust memory** (Synthius-Mem lessons): CategoryRAG with hallucination resistance > 99%.
-- **LoCoMo + LongMemEval benchmark eval.** 75–95% range is where 2026 SOTA lives. We should be in that range by Q4 2026.
-- **Memanto vs. MemX decision.** If pure-vector-with-typing hits 90% of MemX's performance on our eval, **drop the graph** in v2. Don't carry complexity without measured benefit.
-
-### Proactive AI — the v1.5 differentiator, the v2 moat
-- **Proactive trigger layer** live in OpenClaw (Dec 2026): Microsoft Research 220 MiB BF16 graph-encoder trigger + PRISM Festina Lente gate. **Fires <1% of the time, only when both p_need × p_accept cross threshold.** LLM only on the actual intervention.
-- **Salience-aware interrupt policy.** Don't speak unless the user is likely to want it. Sensible Agent (UMD 2026) gaze/hand-occupancy signals.
-- **Daily briefing agent.** Calendar + email + recent memories → 60-second spoken summary. The "killer app" for an always-on wearable.
-- **ProAgentBench evaluation** of our trigger. Target: >90% anticipation recall, <5% false-alarm rate.
-- **ProActor-style RL fine-tuning** of the proactive layer once we have user feedback. ACL 2026 paper is the template.
-
-### Privacy + safety — make it a moat
-- **DPDP Act + EU AI Act compliance audit.** India DPDP and EU AI Act are both tightening in 2026. On-device-only is a compliance advantage. Document it.
-- **Federated fine-tuning** for user-specific memory: each user's memories fine-tune their own model, never the central model. This is the privacy story.
-- **Perception-frame trust score** in perceptiond: scored by visual coherence, content type, prompt-injection risk. Below threshold → no tool execution.
-- **Cross-modal prompt-injection paper** (target: USENIX Security 2027). The combination of (1) perception-frame trust score, (2) SlotGuard-style transcript redaction, (3) two-channel tool execution, (4) interaction-barrier shielding, is the contribution.
-
-### Success criteria (Jun 2027)
-- [ ] danlab-multimodal v3 with TT-SI in production, published eval.
-- [ ] Memory v2 (dual-process) deployed; LoCoMo in SOTA range.
-- [ ] Proactive trigger layer live in OpenClaw, evaluated on ProAgentBench.
-- [ ] Daily briefing agent demoable.
-- [ ] Cross-modal prompt-injection paper submitted.
-- [ ] Dan Glasses v1.5 shipped to ≥10 pilot users (likely ourselves + 9 testers in Bengaluru).
-- [ ] DanClaw multi-agent orchestrator running the company.
+- [ ] Dani v2 live with audiod + memoryd + paperclip as skills
+- [ ] HRM-Text-2B on-device, <500ms inference
+- [ ] 10K units shipped
+- [ ] 1 NeurIPS main-track submission
+- [ ] Public third-party safety audit published
+- [ ] Series A closed or strategic partnership signed
 
 ---
 
-## 24-Month Plan (Jun 2026 → Jun 2028) — "Make it co-evolve with the user"
+## What we are NOT doing (and why)
 
-**Theme:** From "personal assistant" to "personal intelligence that co-evolves." This is where Danlab's contribution to AGI gets sharp.
-
-### AGI-shaped research bets
-- **HRM-Text 1B + LFM2.5-VL-450M as the on-device intelligence pair.** HRM-Text 1B's continuous-latent reasoning is the right on-device "thinking" pattern for wearables. **LFM2.5-VL-450M sees, HRM-Text 1B reasons.** No frontier LLM dependency.
-- **Recurrent latent reasoning (RLRP, ICLR 2026)** in the on-device LLM. Internal latent refinement, not external CoT. Compatible with our current llama.cpp stack. This is the path to "reasoning at the edge" without burning tokens.
-- **Operator-consistent RL (Op-RL)** for the personal agent: train the user-facing agent to *be* the improvement operator — generate draft, distill, refine — rather than just a single-pass generator. PDR-style.
-- **Tiny Recursive Models (TRM)** as the policy backbone for some sub-tasks. The 2026 work on unrolled policy iteration for TRMs is the most promising small-model RL setup I've seen.
-- **Skill banks (SkillRL, ICLR 2026 workshop):** a hierarchical library of reusable skills discovered through experience. This is how you get "knows your workflow" without a 100B-param model.
-- **Self-evolving agent loop (DPA / DPCM):** the System 1 / System 2 dual-process design from the 2026 memory literature, applied to the *whole agent*, not just memory.
-
-### Platform bets
-- **dani as the world's best agent skills library** is a real positioning play. Every piece of Dan Glasses code should be releasable as a skill. The "world's best skills library" tagline from the dani repo is achievable if we treat every architecture decision as a primitive someone else will use.
-- **Open-weights release** of:
-  - LFM2.5-VL fine-tuned for Indian-language OCR (if results hold)
-  - A "Dan Glasses prompt-injection defense" model
-  - A DanClaw agent harness
-  - **A wearable-grade HRM-Text 1B LoRA** fine-tuned for personal memory reasoning
-- **Indie hardware path.** If Redax is a dead end, we have to design our own. 6-month clock on that decision (must be made by Dec 2026).
-
-### Hiring + organization
-- **Research scientist** focused on self-improvement / RL — single highest-leverage hire.
-- **Embedded systems engineer** for the actual wearable path.
-- **Hindi/Tamil/Bengali linguist** for the Indian-language bet.
-- **OSS maintainer** for dani-skills (this is the distribution channel).
-
-### Success criteria (Jun 2028)
-- [ ] Dan Glasses v2 with self-improving memory and proactive trigger layer shipping as a product.
-- [ ] At least 2 open-source releases with measurable adoption.
-- [ ] A published paper from danlab at a major venue (NeurIPS / ICML / ICLR / USENIX Security). Likely target: edge self-improvement, memory architecture, or wearable prompt-injection defense.
-- [ ] dani-skills: 50+ production-grade skills in the catalog.
-- [ ] A demonstrable co-evolution loop: the assistant's behavior demonstrably changes based on accumulated user-specific memory, in a way that's auditable.
+1. **Not building our own foundation model.** HRM-Text is open (Sapient, May 18 2026, $1,500), LFM2.5 is open (Liquid AI), Gemma is open (DeepMind), OmniVLM-968M is open. The 2026 frontier is too expensive for a 2-person lab.
+2. **Not competing on Meta's distribution.** Meta has 70%+ market share, Meta Glasses at $299 (Jun 22 2026, Muse Spark from Meta Superintelligence Labs), 14 new languages incl. Hindi. We compete on **on-device-first + open-source + India-cost + reliability** — they cannot match us here without abandoning their cloud-first business.
+3. **Not chasing Apple.** Apple's AI AirPods + glasses (Bloomberg) means we should partner, not compete. Stay on Android XR + Tailscale + Tauri stack.
+4. **Not deploying SIA before evaluating AIE-Bench first.** SIA is the right framework, but AIE-Bench is the right *measurement* — submit the audiod agent to AIE-Bench first, get a public number, then adopt SIA with the public baseline as proof of improvement.
+5. **Not claiming "RL" without harness + weights modification.** The danlab-multimodal "pre-RL scaffold" framing is honest and credible. The audiod calibration RL agent is the first artifact that earns the "RL" label. Stay disciplined.
+6. **Not pausing.** Anthropic's Jun 4 2026 pause call is for *frontier* labs accelerating RSI. Danlab is sub-1B on-device — the pause concern does not apply, and the audiod calibration work is the *opposite* of unverified acceleration: it ships with a public benchmark, a failure-mode registry, and an audit trail.
 
 ---
 
-## v6 add — the Anthropic "brake pedal" positioning
+## Three "if this, then that" contingencies
 
-On 2026-06-04, Anthropic's Jack Clark publicly called for an industry-wide "brake pedal" — a coordinated, verifiable way to slow or pause frontier AI development if self-improvement accelerates past societal ability to manage risks.[^anthropic_brake] Anthropic's own published data: Claude writes >80% of the code merged into Anthropic's production systems, and engineers ship 8× more code than before. The piece frames three scenarios: human-led (today), AI-led scaffolding (next 1–3 years), full RSI ("by 2028 with ~60% probability" per Anthropic, per news reports).
-
-**For Danlab, this is a positioning signal, not a constraint.** Our bet — on-device, open-source, auditable, Indian-language, privacy-first — is exactly the right side of the Anthropic call. We are not building frontier-capability systems that need a brake pedal. We are building small, focused, transparent, user-controlled systems that exemplify the "on-device, auditable, privacy-first" branch of the AGI conversation.
-
-**What this means for messaging:**
-- "Dan Glasses is what personal AI should look like in the recursive-self-improvement era: small, on-device, auditable, and *yours*."
-- Lead with the privacy + auditable-self-improvement story. Not with raw capability.
-- **The Anthropic "brake pedal" call is a marketing tailwind for our positioning.** Use it.
+1. **If AIE-Bench submission scores bottom quartile** → pivot to procedural memory (memoryd v2) as the v2 differentiator. Self-improvement is not yet ready for sub-1B models; the audiod calibration task may be too narrow. Alternative: submit memoryd v2 + AEL bandit to LongMemEval instead.
+2. **If OmniVLM-968M eval beats LFM2.5-VL-450M by >2× watchful-mode throughput** → swap immediately, push hardware v1.5 dev-kit schedule forward by 3 months.
+3. **If Anthropic ships Claude Code + A2A plugin ecosystem before Sept 2026** → adopt A2A for OpenClaw → Claude handoff, build Dan Glasses as an A2A node (not just an MCP server).
 
 ---
 
-## What to stop doing
+## v5 → v6 changes
 
-- ❌ **Calling the danlab-multimodal feedback loop "RL."** It is a heuristic. Until harness+weights are open, the label stays pre-RL. This is the integrity call.
-- ❌ **Building paperclip-style company infrastructure that doesn't drive a product.** Paperclip's value is as the orchestrator for Dan Glasses / dani. If it's not in that loop, it's dead weight.
-- ❌ **Hand-rolling more Python daemons when OpenClaw can host the logic.** The 5-daemon split is right for the hot path (audio, vision, memory, tools, tts) but new logic should go in OpenClaw agents unless it has clear latency / safety requirements.
-- ❌ **Optimizing for x86_64 laptop performance** beyond "good enough to demo." Every Watt we save on aarch64 matters 100× more.
-- ❌ **Conflating LFM2.5-VL-450M (vision) with HRM-Text 1B (reasoning).** Two models, one pipeline. Document the distinction.
-- ❌ **Adding a graph database in v1.5.** Memanto shows pure-vector can hit SOTA. Don't carry complexity without measured benefit.
+1. **HRM-Text corrected: 84.5% GSM8K (not 84.7%), May 18 2026 release, $1,500 training cost, fully open-sourced.** v5 had minor drift on the GSM8K number; v6 is exact.
+2. **arXiv 2606.21090 rise-and-collapse failure mode integrated into audiod RL agent design.** Early-stop + CARE-style belief revision. v6: audiod RL agent ships with a failure-mode registry as a first-class artifact.
+3. **Operative Context surface (NEW v6) added to memoryd + proactived + UI.** Per OpenReview "Operative Contexts" 2026 framing — distinguish stored memory from operative context that drives behavior.
+4. **`/reliability` endpoint on every daemon (NEW v6).** Typed contract: `{ece, brier, last_failure_class, fault_class_distribution}`.
+5. **V5e-0 self-speculative decoding added to perceptiond v2 plan.** 1.89× speedup, zero training cost, applies on top of any VLM.
+6. **CondenseVLM + QViD token condensation added to perceptiond v2 plan.** Training-free, halves encoder time.
+7. **proactived and rewardsd given full architecture specs (NEW v6).** v5 mentioned in passing; v6 specifies endpoints, OpenClaw tool exposure, failure-mode registry access.
+8. **Meta Glasses confirmed at $299 (Jun 22 2026) with Muse Spark from Meta Superintelligence Labs.** 14 new languages including Hindi/Japanese/Mandarin/Korean. v6 sharpens the competitive framing.
+9. **Anthropic Jun 4 2026 global pause call integrated into the narrative.** Danlab's audiod calibration work is *the* alternative to unverified RSI acceleration: public benchmark + failure-mode registry + audit trail.
+10. **Show HN Aug 25, 2026 (per Dan1 v82) is the v6 commitment date.** arXiv pre-print by Aug 15. AIE-Bench + SEAGym submission Sep 30.
 
----
-
-## Risks (load-bearing)
-
-| Risk | Severity | Mitigation |
-|------|----------|------------|
-| Redax hardware slips / dies | Critical | Tethered-glasses path with CoVSpec; indie hardware if necessary |
-| HRM-Text 1B underperforms on real memory reasoning | High | LFM2-1.2B-Thinking fallback; benchmark on day 1 |
-| Frontier model commoditizes our edge advantage | High | Lean harder on privacy, Indian-language coverage, always-on context |
-| RHO / SIA doesn't beat the heuristic in 12 months | Medium | Honest publish. Negative results are still science. |
-| India DPDP / EU AI Act compliance becomes a moat-instead-of-moat | Medium | Document the on-device design; certify if required |
-| Key person dependency on somdipto | High | dani as the persistent memory of the org + this AGENTS.md system |
-| Apple smart glasses ship in late 2027 with similar positioning | High | Lean into India-first, open-source, on-device. Apple's walled-garden approach is our opening. |
-| Open-source AI companions commoditize the "personal intelligence" framing | Medium | Lean into *proactive* over reactive. Nobody has shipped proactive well yet. |
-
----
-
-## One-line summary
-
-**Ship the wearable, prove the platform, teach it to learn, make it initiate — and stay ruthlessly honest about what's heuristic and what's RL.** 
-
-v6 deltas: HRM-Text 1B integrated; proactive AI promoted to v1.5 differentiator; CoVSpec tethered path added; Anthropic "brake pedal" framing absorbed; self-improvement landscape expanded to include RHO, HarnessX, AHE, HarnessForge.
-
----
-
-## Footnotes
-
-[^rho]: Evolving Agents in the Dark: Retrospective Harness Optimization via Self-Preference. arXiv:2606.05922. https://arxiv.org/html/2606.05922v2
-[^anthropic_brake]: Anthropic says AI labs need coordinated plan to halt development if risks rise. Reuters, 2026-06-04. https://www.reuters.com/business/anthropic-says-ai-labs-need-coordinated-plan-halt-development-if-risks-rise-2026-06-04/
-
----
-
-*👾*
+— Dan2, 2026-06-24 11:30 IST

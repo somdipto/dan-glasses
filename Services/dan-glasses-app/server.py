@@ -19,6 +19,8 @@ import urllib.request
 import urllib.error
 import socket
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 
 DIST = os.environ.get("DIST", "/home/workspace/dan-glasses/apps/dan-glasses-app/dist")
@@ -315,6 +317,137 @@ def _serve_perceptiond_proxy(self: "SPAHandler") -> None:
     return _forward_to_upstream(self, PERCEPTIOND_HTTP, subpath, parsed.query)
 
 
+# Upstream base URLs for the /api/services/health aggregator. The order here
+# is the order in which results are returned to the client. The wizard's
+# `ALL_SERVICES` step list mirrors this set.
+HEALTH_AGGREGATOR_SERVICES = (
+    ("memoryd", MEMORYD_HTTP),
+    ("toold", TOOLD_HTTP),
+    ("ttsd", TTSD_HTTP),
+    ("audiod", AUDIOD_HTTP),
+    ("perceptiond", PERCEPTIOND_HTTP),
+)
+HEALTH_AGGREGATOR_TIMEOUT_S = 2.0
+# Single shared executor for fan-out. 8 workers > 5 daemons so the aggregator
+# never queues. Threads exit when the process exits; we don't reuse the
+# executor for any other purpose.
+_HEALTH_EXECUTOR = ThreadPoolExecutor(
+    max_workers=max(8, len(HEALTH_AGGREGATOR_SERVICES) + 3),
+    thread_name_prefix="health-agg",
+)
+
+
+def _probe_health(name: str, base: str, timeout: float = HEALTH_AGGREGATOR_TIMEOUT_S) -> dict:
+    """Probe a single daemon's /health endpoint. Never raises — always returns a dict.
+
+    Result shape:
+      {"service": name, "upstream": base, "ok": bool, "status": int|null,
+       "latency_ms": int, "body": dict|None, "error": str|None}
+    """
+    url = base.rstrip("/") + "/health"
+    started = time.monotonic()
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            body_bytes = resp.read()
+            latency = int((time.monotonic() - started) * 1000)
+            try:
+                body = json.loads(body_bytes.decode("utf-8", errors="replace"))
+            except (ValueError, UnicodeDecodeError):
+                body = None
+            return {
+                "service": name,
+                "upstream": base,
+                "ok": 200 <= resp.status < 300,
+                "status": resp.status,
+                "latency_ms": latency,
+                "body": body,
+                "error": None,
+            }
+    except urllib.error.HTTPError as e:
+        latency = int((time.monotonic() - started) * 1000)
+        try:
+            body = json.loads(e.read().decode("utf-8", errors="replace")) if e.fp else None
+        except Exception:
+            body = None
+        return {
+            "service": name,
+            "upstream": base,
+            "ok": False,
+            "status": e.code,
+            "latency_ms": latency,
+            "body": body,
+            "error": f"upstream HTTP {e.code}",
+        }
+    except (urllib.error.URLError, ConnectionError, TimeoutError, OSError) as e:
+        latency = int((time.monotonic() - started) * 1000)
+        return {
+            "service": name,
+            "upstream": base,
+            "ok": False,
+            "status": None,
+            "latency_ms": latency,
+            "body": None,
+            "error": str(e) or type(e).__name__,
+        }
+
+
+def _serve_services_health(self: "SPAHandler") -> None:
+    """GET /api/services/health — fan out to every backend's /health concurrently.
+
+    Response shape:
+      {
+        "ok": bool,                            # true iff every service is up
+        "up_count": int,
+        "down_count": int,
+        "total_latency_ms": int,               # wall-clock from first to last result
+        "services": {                          # keyed by service name for fast lookup
+          "memoryd":   {"ok": bool, "status": int|null, "latency_ms": int,
+                         "body": dict|None, "error": str|None, "upstream": str},
+          ...
+        },
+        "results": [...],                      # same payload in declared order
+        "ts": float                            # server time of aggregation (epoch seconds)
+      }
+
+    The aggregator always returns 200 — the per-service `ok` fields are
+    what callers branch on. Returning 200 even when downstreams are down
+    lets a single fetch drive the wizard UI without extra retry logic.
+    """
+    started = time.monotonic()
+    futures = {
+        _HEALTH_EXECUTOR.submit(_probe_health, name, base): name
+        for name, base in HEALTH_AGGREGATOR_SERVICES
+    }
+    # Preserve declared order in `results`. Use a dict to dedupe.
+    results_by_name: dict[str, dict] = {}
+    for fut in as_completed(futures, timeout=HEALTH_AGGREGATOR_TIMEOUT_S + 1.0):
+        name = futures[fut]
+        try:
+            results_by_name[name] = fut.result()
+        except Exception as e:  # never expected — _probe_health catches everything
+            results_by_name[name] = {
+                "service": name,
+                "ok": False,
+                "status": None,
+                "latency_ms": -1,
+                "body": None,
+                "error": f"probe crashed: {e!r}",
+            }
+    results = [results_by_name[name] for name, _ in HEALTH_AGGREGATOR_SERVICES if name in results_by_name]
+    services = {r["service"]: r for r in results}
+    up = sum(1 for r in results if r["ok"])
+    down = len(results) - up
+    self._send_json(200, {
+        "ok": down == 0,
+        "up_count": up,
+        "down_count": down,
+        "total_latency_ms": int((time.monotonic() - started) * 1000),
+        "services": services,
+        "results": results,
+        "ts": time.time(),
+    })
+
+
 def _serve_memoryd_proxy(self: "SPAHandler") -> None:
     """Handle /api/memoryd/<path>. Forwards HTTP to memoryd on :8741."""
     parsed = urlparse(self.path)
@@ -417,6 +550,8 @@ class SPAHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        if self.path.startswith("/api/services/health"):
+            return _serve_services_health(self)
         if self.path.startswith("/api/audiod"):
             return _serve_audiod_proxy(self)
         if self.path.startswith("/api/perceptiond"):

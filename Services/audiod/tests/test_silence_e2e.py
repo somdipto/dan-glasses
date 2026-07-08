@@ -10,12 +10,9 @@ import json
 import socket
 import sys
 import time
-from pathlib import Path
 
 import numpy as np
 import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from capture import ALSACapture, RingBuffer
 from vad import VADSpeechDetector
@@ -87,34 +84,30 @@ def test_ws_handshake_signature_rfc6455():
         hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()
     ).decode()
 
-    # Use a high unused port to avoid colliding with live audiod
-    pub = TranscriptPublisher(mode="stdout", ws_port=18991)
+    # Use mode="websocket" so the WS listener actually binds —
+    # stdout mode (the v1.4 default) intentionally does NOT start
+    # a WS server. The v0.9 over-correction was starting the WS
+    # listener in stdout mode; v1.4 removes that.
+    # Use ws_port=0 (ephemeral) so we never collide with the live
+    # audiod's WS publisher (which has bound 18991 in production).
+    pub = TranscriptPublisher(mode="websocket", ws_port=0)
     try:
-        # Wait for the WS server thread to bind. The listener is
-        # started in a background thread, so we need to poll for
-        # the bind to land before we connect.
+        # Wait for the WS server thread to bind and report its
+        # ephemeral port. With ws_port=0, pub.ws_port stays at 0
+        # until the listener thread binds and updates it.
         import time
         deadline = time.time() + 2.0
-        bound = False
-        while time.time() < deadline:
-            probe = socket.socket()
-            probe.settimeout(0.05)
-            try:
-                probe.connect(("127.0.0.1", 18991))
-                probe.close()
-                bound = True
-                break
-            except OSError:
-                probe.close()
-                time.sleep(0.02)
-        assert bound, "WS server did not bind to 18991 within 2s"
+        while time.time() < deadline and pub.ws_port == 0:
+            time.sleep(0.02)
+        ws_port = pub.ws_port
+        assert ws_port > 0, f"WS server did not bind within 2s"
 
         s = socket.socket()
         s.settimeout(2.0)
-        s.connect(("127.0.0.1", 18991))
+        s.connect(("127.0.0.1", ws_port))
         req = (
             "GET / HTTP/1.1\r\n"
-            "Host: 127.0.0.1:18991\r\n"
+            f"Host: 127.0.0.1:{ws_port}\r\n"
             "Upgrade: websocket\r\n"
             "Connection: Upgrade\r\n"
             f"Sec-WebSocket-Key: {key}\r\n"

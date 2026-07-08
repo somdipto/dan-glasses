@@ -593,3 +593,80 @@ sync. The Tauri SSE stream (`/events`) still replays the last 20 on
 attach — when a UI needs more, it should drain via `/descriptions?since=N`
 and then connect SSE for the live tail. Don't replace SSE with
 polling; they're complementary.
+
+## v12.0 — persistent description log (`/descriptions?since=N` durability)
+
+**Problem:** the v11.0 `?since=N` cursor only covers what is still in the
+in-memory ring (cap 200). If a Tauri client was backgrounded long enough
+that the ring rotated past its `last_seen_event_id`, the response was
+empty and the cursor said `overflowed=true` — the client had to fall
+back to memoryd's embedding search, which is the wrong API for known-id
+replay.
+
+**Solution:** durable, append-only JSONL log at
+`~/.cache/dan-glasses/perceptiond/descriptions.log`. Bounded by line
+count (default 50,000) and byte count (default 50 MiB); oldest lines
+evicted first. The `?since=N` handler automatically falls back to the
+log when the ring returns empty but the client's id is older than
+`ring_oldest_event_id`, so reconnecting clients get the events they
+missed without changing anything in the calling code.
+
+**What ships:**
+
+- `DescriptionLog` class in `events.py` — JSONL appender with
+  `submit()` (non-blocking, queue + worker thread), `read(since_id)`,
+  `stats()`, `close()`. On-disk index maps `event_id -> byte_offset`
+  so backfill reads skip directly to the slice the client needs. The
+  index is rebuilt from disk on first read so cold-starts serve
+  `?since=N` correctly.
+- `DescriptionPublisher.__init__` now takes
+  `description_log_path / lines_cap / bytes_cap`. `publish()` calls
+  `description_log.submit(event)` after the ring/EventBus fan-out, in
+  the same ordering as the v8.0 memory_sink call. `close()` drains
+  the worker so the on-disk JSONL contains every event published
+  before shutdown.
+- `DescriptionPublisher.since(last_id)` — when the in-memory ring
+  returns empty, automatically falls back to `description_log.since()`.
+  The HTTP handler's `cursor.overflowed` flag is preserved (clients
+  still know the ring missed events) but the response body is no
+  longer empty.
+- `/descriptions` response now carries `cursor.source` (`ring` |
+  `log` | `none`) and `cursor.log` (full stats block) so the client
+  can tell exactly which tier served the request.
+- `GET /log/stats` — `path`, `lines`, `bytes`, `bytes_cap`,
+  `lines_cap`, `truncated_count`, `first_event_id`, `last_event_id`,
+  `first_ts`, `last_ts`, `writes`, `errors`, `enabled`, `queue_depth`.
+- `/status` and `/stats` both expose the same `description_log` block.
+- Tauri bridge: `PerceptionDescriptionLogStats` struct +
+  `perception_description_log_stats` command; TS `logStats()` method
+  on both backends. `PerceptionStatus` gains `description_log`.
+- Config: `description_log.{path, lines_cap, bytes_cap}` block in
+  `config.py` defaults + `perceptiond.yaml`. Log path defaults to
+  `~/.cache/dan-glasses/perceptiond/descriptions.log`; caps match
+  defaults (50,000 lines / 50 MiB).
+
+**Tests (6 new, 5 pytest + 1 main()-only live-HTTP test):**
+
+- `test_description_log_basic_round_trip` — submit 3, read 3, identical.
+- `test_description_log_evicts_by_line_count` — cap=10, append 25,
+  only last 10 lines survive, ids 16-25.
+- `test_description_log_handles_concurrent_writes` — 4 threads x 50
+  submits each = 200 events, all on disk, no corruption.
+- `test_publisher_wires_description_log` — `DescriptionPublisher.publish()`
+  also submits to description_log.
+- `test_publisher_since_falls_back_to_log` — overflowed ring → log
+  serves the missing events.
+- `test_descriptions_endpoint_log_fallback` (main()-only) — live HTTP
+  /descriptions?since=2 on a ring that's overflowed returns log-sourced
+  data with `cursor.source=log`.
+
+**Total tests:** 54/54 pass via main(); 53/53 via pytest.
+
+**Operational note:** the log is the cold tier — `/descriptions?since=N`
+will return the events you missed across a long disconnect as long as
+they're still inside the 50K-line / 50 MiB budget. Beyond that, the
+client gets a smaller window and the existing `overflowed` flag tells
+it the ring is gone too, at which point the right path is memoryd's
+episodic search rather than incremental sync. Tauri SSE (`/events`)
+still replays the last 20 on connect — the log is purely for the
+incremental "what did I miss" use case.

@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * zo-mcp-bridge-stdio.js
  * MCP bridge using stdio transport (JSON-RPC 2.0 over stdin/stdout)

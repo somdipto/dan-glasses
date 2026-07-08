@@ -9,7 +9,7 @@ import httpx
 sys.path.insert(0, os.path.dirname(__file__))
 
 TOOLD_PORT = 8742
-BASE_URL = f"http://localhost:{TOOLD_PORT}"
+BASE_URL = f"http://127.0.0.1:{TOOLD_PORT}"
 
 
 @pytest.mark.asyncio

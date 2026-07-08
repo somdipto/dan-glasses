@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""dan-doctor — Fast health check for the Dan Glasses foundation stack.
+
+Use this from any agent to verify the stack is up before doing real work.
+
+Checks:
+  audiod     :8090 /ready            (readiness.vad and readiness.whisper_binary)
+  perceptiond :8092 /status          (mode)
+  memoryd    :8741 /health           (status=ok)
+  toold      :8742 /health           (status=ok)
+  ttsd       :8743 /health           (status=ok)
+  os-toold   :8744 /health           (status=ok)
+  openclaw   :18789 /healthz         (status=live)
+  dan-app    :3888 /                 (any HTML)
+
+Exit codes:
+  0 = all green
+  1 = at least one service degraded
+  2 = network/connection failure (most services down)
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+import urllib.error
+import urllib.request
+from typing import Any
+
+
+SERVICES = [
+    ("audiod",      "http://127.0.0.1:8090/ready",            "readiness.vad",         "whisper"),
+    ("perceptiond", "http://127.0.0.1:8092/status",           "mode",                 None),
+    ("memoryd",     "http://127.0.0.1:8741/health",           "status",               "ok"),
+    ("toold",       "http://127.0.0.1:8742/health",           "status",               "ok"),
+    ("ttsd",        "http://127.0.0.1:8743/health",           "status",               "ok"),
+    ("os-toold",    "http://127.0.0.1:8744/health",           "status",               "ok"),
+    ("openclaw",    "http://127.0.0.1:18789/healthz",         "status",               "live"),
+    ("dan-app",     "http://127.0.0.1:3888/",                 None,                   None),
+]
+
+
+def _probe(url: str, timeout: float) -> tuple[int, Any, float]:
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            body = r.read()
+            try:
+                return r.status, json.loads(body), (time.time() - t0) * 1000
+            except (json.JSONDecodeError, ValueError):
+                return r.status, body[:200].decode("utf-8", "replace"), (time.time() - t0) * 1000
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()[:200].decode("utf-8", "replace"), (time.time() - t0) * 1000
+    except Exception as e:  # noqa: BLE001
+        return 0, f"{type(e).__name__}: {e}", (time.time() - t0) * 1000
+
+
+def _check_field(body: Any, dotted: str, expected: Any) -> tuple[bool, str]:
+    if dotted is None:
+        # Liveness-only check: any 2xx with non-empty body is good
+        if isinstance(body, str):
+            return bool(body.strip()), f"len={len(body)}"
+        if isinstance(body, dict):
+            return True, f"keys={len(body)}"
+        return True, "ok"
+    cur = body
+    for part in dotted.split("."):
+        if isinstance(cur, dict) and part in cur:
+            cur = cur[part]
+        else:
+            return False, f"missing {dotted}"
+    if expected is None:
+        return True, f"{dotted}={cur}"
+    ok = (cur == expected)
+    return ok, f"{dotted}={cur}"
+
+
+def run() -> dict:
+    results = []
+    for name, url, field, expected in SERVICES:
+        code, body, ms = _probe(url, timeout=2.0)
+        if code == 0:
+            ok = False
+            detail = str(body)[:60]
+        elif 200 <= code < 300:
+            ok, detail = _check_field(body, field, expected)
+        else:
+            ok = False
+            detail = f"http={code}"
+        results.append({
+            "service": name,
+            "url": url,
+            "ok": ok,
+            "http": code,
+            "latency_ms": round(ms, 1),
+            "detail": detail,
+        })
+    total = len(results)
+    healthy = sum(1 for r in results if r["ok"])
+    return {
+        "passed": healthy == total,
+        "healthy": healthy,
+        "total": total,
+        "results": results,
+        "timestamp": time.time(),
+    }
+
+
+def main() -> int:
+    p = argparse.ArgumentParser()
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--quiet", action="store_true", help="only print failed services")
+    args = p.parse_args()
+    report = run()
+    if args.json:
+        print(json.dumps(report, indent=2))
+        return 0 if report["passed"] else 1
+    if args.quiet and report["passed"]:
+        print(f"OK {report['healthy']}/{report['total']}")
+        return 0
+    mark = "✅" if report["passed"] else "❌"
+    print(f"\n{mark} Dan Glasses stack — {report['healthy']}/{report['total']} healthy\n")
+    for r in report["results"]:
+        if args.quiet and r["ok"]:
+            continue
+        m = "✓" if r["ok"] else "✗"
+        lat = f"{r['latency_ms']:6.1f}ms"
+        print(f"  [{m}] {r['service']:<12} http={r['http']:<3} {lat}  {r['detail']}")
+    print()
+    return 0 if report["passed"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

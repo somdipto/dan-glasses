@@ -395,3 +395,64 @@ review ("what did Dan see between 14:00 and 15:00 yesterday?").
   type + `logStats()` method
 - `apps/dan-glasses-app/src/components/VisionDashboard.tsx` — wire
   `lastSeenEventId` + `descriptions(since=…)` reload
+
+## v12.0 — persistent description log (this run, 2026-07-08 04:55 IST)
+
+**Reconciled state at start of run:**
+- perceptiond v11.0 live on :8092, 48/48 tests pass
+- Tauri Rust bridge rebuild in progress (cargo index update; deferred)
+- Live ring has 4 descriptions, 722 JPEGs on disk
+- Status: service healthy, /status `total_published` working
+- memoryd sink shipping every description
+
+**Goal:** close the "restart loses descriptions" gap. v11.0's ring-buffer
+cursor is in-process only — restart clears it. The Tauri `perception_cursor`
+command can recover ring state, but a freshly-launched perceptiond has
+`ring_oldest_event_id=0` and `total_published=0` until the next VLM call.
+memoryd does have the descriptions (sink is on), but querying "what did
+Dan see between 14:00 and 15:00 yesterday" requires an embedding search,
+not a clean time-range query.
+
+**Solution:** append-only JSONL description log on disk. Same pattern as
+the v10.0 image_store: in-memory ring fronts the log for the hot path, log
+is the durable tail. Bounded by line count (default 50k) and bytes
+(default 50 MiB). `?since=<unix_ts>&count=N` returns all descriptions
+published after that timestamp — exactly what the Tauri dashboard needs on
+"reopen after lunch" reload.
+
+**Design:**
+- `DescriptionLog` class in `events.py`:
+  - `append(event)` — writes one JSON line, called by `DescriptionPublisher.publish()`
+    right after the ring/EventBus fan-out, same ordering as the v8.0 memory_sink call.
+  - `since(unix_ts)` — returns all events with `timestamp` > ts, oldest first.
+  - `recent(count)` — last N from the log.
+  - `stats()` — path, lines, bytes, bytes_cap, lines_cap, truncated_count,
+    first_ts, last_ts, writes, errors.
+  - LRU eviction on overflow (count or bytes) — slices off the oldest lines
+    on each append in a background thread so the hot path stays O(1).
+  - Crash-safe: each append is `write(line) + flush() + os.fsync()` every
+    N writes (default 32) to avoid losing >1s of descriptions on a power cut.
+  - Hex-id whitelist at the disk boundary (matches v10.0 image_store pattern).
+- New endpoint: `GET /descriptions?since_ts=<unix>` — alias of the
+  `since` event_id cursor, but uses wall-clock time. Works across restart
+  because the log is durable. Returns `count`, `descriptions`, `cursor`.
+- New endpoint: `GET /log/stats` — full log stats.
+- `/status` and `/stats` get a new `description_log` block: `enabled`,
+  `lines`, `bytes`, `bytes_cap`, `lines_cap`, `first_ts`, `last_ts`,
+  `truncated_count`, `writes`, `errors`.
+
+**Files to touch:**
+- `events.py` — `DescriptionLog` class, `?since_ts` parsing, `/log/stats`
+  endpoint, `publish()` hook in `DescriptionPublisher`
+- `perceptiond.py` — wire `description_log` config, expose stats
+- `config.py` — `description_log` default block
+- `perceptiond.yaml` — live `description_log` block
+- `tests/test_perceptiond.py` — 8 new tests + main() entries
+- `SPEC.md` — v12.0 section appended
+- `STATUS.md` — bumped to v12.0
+
+**Out of scope (parked):**
+- Tauri bridge: `perception_descriptions_since_ts(ts)` command + `since_ts`
+  reload logic in `VisionDashboard.tsx`. Same shape as the v11.0 cursor
+  work, can ship as v12.1 once the Rust rebuild completes.
+

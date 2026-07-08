@@ -10,7 +10,7 @@ import httpx
 sys.path.insert(0, os.path.dirname(__file__))
 
 MEMORYD_PORT = 8741
-BASE_URL = f"http://localhost:{MEMORYD_PORT}"
+BASE_URL = f"http://127.0.0.1:{MEMORYD_PORT}"
 TEST_DB = tempfile.mktemp(suffix=".db")
 
 
@@ -214,6 +214,24 @@ async def test_stats():
         assert "conversations" in data
         assert "dim" in data
         assert data["dim"] == 384
+
+
+@pytest.mark.asyncio
+async def test_v1_embeddings():
+    async with httpx.AsyncClient(base_url=BASE_URL, timeout=60) as c:
+        r = await c.post("/v1/embeddings", json={
+            "input": ["alpha", "beta", "gamma"],
+            "model": "all-MiniLM-L6-v2"
+        })
+        assert r.status_code == 200
+        data = r.json()
+        assert data["object"] == "list"
+        assert len(data["data"]) == 3
+        for i, item in enumerate(data["data"]):
+            assert item["object"] == "embedding"
+            assert isinstance(item["embedding"], list)
+            assert len(item["embedding"]) == 384
+            assert item["index"] == i
 
 
 if __name__ == "__main__":

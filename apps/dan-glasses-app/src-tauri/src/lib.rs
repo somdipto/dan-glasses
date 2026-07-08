@@ -117,6 +117,24 @@ pub struct PerceptionModeResponse {
     pub mode: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PerceptionDescriptionLogStats {
+    pub path: String,
+    pub lines: u64,
+    pub bytes: u64,
+    pub bytes_cap: u64,
+    pub lines_cap: u64,
+    pub truncated_count: u64,
+    pub first_event_id: u64,
+    pub last_event_id: u64,
+    pub first_ts: Option<String>,
+    pub last_ts: Option<String>,
+    pub writes: u64,
+    pub errors: u64,
+    pub enabled: bool,
+    pub queue_depth: u64,
+}
+
 fn http_client(timeout_ms: u64) -> reqwest::Result<reqwest::Client> {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_millis(timeout_ms))
@@ -398,6 +416,24 @@ async fn perception_memory_stats() -> Result<Option<PerceptionMemorySink>, Strin
         .map_err(|e| format!("decode: {e}"))
 }
 
+// v12.0 — durable description log stats. Wraps the new
+// `GET /log/stats` endpoint on perceptiond (:8092) so the React
+// dashboard can show how much description history is on disk, what
+// the first/last event_ids are, and how many lines have been
+// truncated by the byte/line caps.
+#[tauri::command]
+async fn perception_description_log_stats() -> Result<PerceptionDescriptionLogStats, String> {
+    let client = perceptiond_client().map_err(|e| format!("client: {e}"))?;
+    let resp = client
+        .get(format!("{PERCEPTIOND_URL}/log/stats"))
+        .send()
+        .await
+        .map_err(|e| format!("request: {e}"))?;
+    resp.json::<PerceptionDescriptionLogStats>()
+        .await
+        .map_err(|e| format!("parse: {e}"))
+}
+
 // Viewfinder URL — the frontend uses this to build the <img src=...> for the
 // MJPEG /stream endpoint. Same as tauriApi.viewfinderUrl() in dev mode.
 #[tauri::command]
@@ -430,6 +466,7 @@ pub fn run() {
             perception_frame_for_id,
             perception_stream_url,
             perception_memory_stats,
+            perception_description_log_stats,
             perception_frame_url,
         ])
         .run(tauri::generate_context!())

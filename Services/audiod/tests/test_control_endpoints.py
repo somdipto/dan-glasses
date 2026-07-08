@@ -133,8 +133,8 @@ def test_unknown_path_returns_404(server):
 
 def test_pipeline_unset_returns_503():
     HealthHandler.pipeline = None
-    port = 18088
-    srv = start_health_server(port)
+    srv = start_health_server(0)
+    port = srv.server_port
     time.sleep(0.1)
     try:
         code, body = _post(port, "/start")
@@ -196,8 +196,8 @@ def test_reload_hot_swaps_whisper_model_no_restart():
     try:
         pipeline = AudioPipeline(cfg, config_path=cfg_path)
         HealthHandler.pipeline = pipeline
-        port = 18094
-        srv = start_health_server(port)
+        srv = start_health_server(0)
+        port = srv.server_port
         time.sleep(0.1)
         try:
             assert pipeline.transcriber.model_path == MODELS[0]

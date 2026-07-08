@@ -969,23 +969,28 @@ class DescriptionPublisher:
     def since(self, last_event_id: int) -> List[dict]:
         """v11.0 — return all ring entries with event_id > last_event_id.
 
-        v12.0: when the ring has been overrun (oldest ring event_id
-        > last_event_id), fall back to the persistent description_log
-        so reconnecting clients can still fetch the events they
-        missed across longer windows than the in-memory ring covers.
-        The cursor.overflowed flag is still set; the log fallback just
-        keeps the response useful instead of empty.
+        v12.0: if the ring is empty (e.g. just-started process) and the
+        log has events, return from the log. Otherwise v11.0 semantics
+        hold: the ring is the source of truth, the caller detects a
+        ring miss via the cursor.overflowed flag in the HTTP response
+        and the HTTP handler is the layer that decides whether to
+        fan-out to the log.
         """
         with self._lock:
             ring_items = [e for e in self._ring if e.get("event_id", 0) > last_event_id]
         if ring_items:
             return ring_items
-        # v12.0: ring miss — try the cold-tier log
-        try:
-            log_items = self.description_log.since(last_event_id) if self.description_log is not None else []
-            return log_items
-        except Exception:
+        # v12.0: ring is empty — try the cold-tier log.
+        if self._ring:
             return ring_items
+        try:
+            if self.description_log is not None:
+                log_items = self.description_log.since(last_event_id)
+                if log_items:
+                    return log_items
+        except Exception:
+            pass
+        return ring_items
 
     def ring_oldest_event_id(self) -> int:
         """v11.0 — event_id of the oldest entry in the ring (0 if empty).

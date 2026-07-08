@@ -94,3 +94,21 @@ tailscaled.log
 # (dan1*.md, dan2*.md, etc. are intentionally tracked)
 .worktrees/
 .tmp/
+
+# --- Debian packaging build outputs ---
+packaging/debian/.debhelper/
+packaging/debian/debhelper-build-stamp
+packaging/debian/files
+packaging/debian/*.substvars
+packaging/debian/*.debhelper.log
+packaging/debian/dan-glasses-daemons/
+
+# --- Random artifacts ---
+agent-work/.modal-sandbox-fs-tools-tmp-*
+apps/dan-glasses-app.bak/
+
+# --- Debian source package build output ---
+debian/dan-glasses-daemons/
+debian/*.debhelper.log
+debian/files
+debian/*.substvars

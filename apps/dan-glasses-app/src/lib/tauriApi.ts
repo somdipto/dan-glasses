@@ -62,6 +62,7 @@ export interface PerceptionStatus {
   dedup_skip_count?: number;
   sse_subscribers?: number;
   memory_sink?: PerceptionMemorySink;
+  description_log?: PerceptionDescriptionLog | null;
   // v11.0: ring-buffer cursor fields exposed in /status.
   total_published?: number;
   ring_oldest_event_id?: number;
@@ -114,6 +115,25 @@ export interface PerceptionBackend {
   streamUrl(): string | null;
   frameForId(imageId: string): Promise<Uint8Array | null>;
   memorySink(): Promise<PerceptionMemorySink | null>;
+  logStats(): Promise<PerceptionDescriptionLog | null>;
+}
+
+// v12.0 — durable description log
+export interface PerceptionDescriptionLog {
+  path: string;
+  lines: number;
+  bytes: number;
+  bytes_cap: number;
+  lines_cap: number;
+  truncated_count: number;
+  first_event_id: number;
+  last_event_id: number;
+  first_ts: string | null;
+  last_ts: string | null;
+  writes: number;
+  errors: number;
+  enabled: boolean;
+  queue_depth: number;
 }
 
 function createTauriBackend(): PerceptionBackend {
@@ -170,6 +190,13 @@ function createTauriBackend(): PerceptionBackend {
       try {
         const status = await invoke<PerceptionStatus>('perception_status');
         return status.memory_sink ?? null;
+      } catch {
+        return null;
+      }
+    },
+    async logStats(): Promise<PerceptionDescriptionLog | null> {
+      try {
+        return await invoke<PerceptionDescriptionLog>('perception_description_log_stats');
       } catch {
         return null;
       }
@@ -250,6 +277,14 @@ function createFetchBackend(baseUrl: string): PerceptionBackend {
         if (!r.ok) return null;
         const s = (await r.json()) as PerceptionStatus;
         return s.memory_sink ?? null;
+      } catch {
+        return null;
+      }
+    },
+    async logStats(): Promise<PerceptionDescriptionLog | null> {
+      try {
+        const r = await fetch(`${baseUrl}/log/stats`);
+        return r.ok ? ((await r.json()) as PerceptionDescriptionLog) : null;
       } catch {
         return null;
       }

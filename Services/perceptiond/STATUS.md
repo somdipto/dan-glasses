@@ -1,12 +1,47 @@
 # perceptiond STATUS
 
+> **Live version: v12.0.0 (2026-07-08 IST).** Service restarted with the durable
+> description log wired in; description_log block now in /status + /stats. JSONL
+> written to `~/.cache/dan-glasses/perceptiond/descriptions.log` (default 50K lines
+> / 50 MiB, LRU-evicted). Reconnecting clients get `?since=N` responses from the
+> log when the in-memory ring has rolled past their last-seen id.
+
 **Service:** Dan Glasses vision pipeline
-**Version:** v11.0.0
+**Version:** v12.0.0
 **Live since:** 2026-06-15
 **Status:** ✅ running (pid ??, supervisor: perceptiond)
 
 
-## What v11.0 ships
+## What v12.0 ships
+
+- **Durable description log** — `DescriptionLog` writes every accepted
+  description to `~/.cache/dan-glasses/perceptiond/descriptions.log`
+  (default 50K lines / 50 MiB, LRU-evicted) so reconnecting clients
+  can fetch missed events even when the in-memory ring (200 cap) has
+  rotated past their last-seen id.
+- **`DescriptionLog` class** — append-only JSONL, single worker thread
+  + `queue.Queue`, `event_id -> byte-offset` backfill index, never
+  blocks the publisher hot path. Disabled by default (passing
+  `description_log_path=None` falls back to default-on).
+- **`since()` ring → log fallback** — `DescriptionPublisher.since(N)`
+  now reads from the cold-tier log when the ring is empty for `N`,
+  so the same `?since=N` endpoint keeps working across long
+  disconnects.
+- **`/descriptions` cursor now has `source: ring|log` and a `log` stats
+  block** — the client can tell whether the response came from
+  memory or disk, and how full the log is. `overflowed` still flags
+  ring misses; the response is non-empty when the log covers the gap.
+- **`/log/stats` endpoint** — exposes `path`, `lines`, `bytes`,
+  `bytes_cap`, `lines_cap`, `truncated_count`, `first_event_id`,
+  `last_event_id`, `first_ts`, `last_ts`, `writes`, `errors`,
+  `queue_depth`.
+- **`description_log` block in `/status` + `/stats`** — same fields,
+  no `path` (operator sees the path once via `/log/stats`).
+- **Tauri bridge** — `PerceptionDescriptionLog` struct,
+  `perception_description_log_stats` command; TS `logStats()` method
+  on both backends.
+- **Tests (6 new)**: 48 prior + 6 v12.0 = 54 pytest + 1 main() = 55
+  total.
 
 - **`/descriptions?since=N` incremental cursor** — clients can ask
   for "everything after event_id N" instead of refetching the last
@@ -102,7 +137,7 @@
 
 ## Tests
 
-48/48 passing (`pytest tests/ -q` collects 47 in ~55s + 1 main()
+54/54 passing (53 pytest + 1 main() live) (`pytest tests/ -q` collects 53 in ~57s + 1 main()
 live-server test `frames_endpoint_disk_fallback`).
 
 ## Live telemetry (sample)

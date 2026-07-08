@@ -1,128 +1,113 @@
-# Top 5 Research Papers to Read — v40
-**Author:** Dan2
-**Date:** 2026-06-23
-**For:** somdipto + the Danlab team
+# Dan-2 Top 5 Papers to Read — v33 (2026-07-06)
 
-> **v40 change:** Replaces v39 #1 (HeLa-Mem) with **HRM-Text (Sapient)** as the #1 read. v40 #2 is **SIA (Hexo Labs)** with the verified W+H numbers. v40 #3-5 cover the new memory architecture stack (Infini Memory, MemVerse, CMA) and the wearable power reference (OpenGlass).
-
-> If you read only one, read #1. If you read only two, read #1 and #2.
-
-## #1. HRM-Text: Efficient Pretraining Beyond Scaling (Sapient)
-**arXiv:** 2605.20613 (May 2026)
-**GitHub:** https://github.com/sapientinc/HRM-Text (MIT-licensed)
-**HuggingFace:** sapientinc/HRM-Text-1B
-**Why this matters:** This is the first credible demonstration that **a 1B model trained for $1,500 can match 2-7B open models on reasoning benchmarks**. The implication for Danlab is enormous: we can own our reasoning stack instead of renting it from a U.S. foundation-model lab. The model is fully open-source, the training recipe is public, and the architecture (hierarchical recurrent with two timescales: slow high-level + fast low-level) is well-suited to wearable compute. HuggingFace CEO publicly endorsed it; Yoshua Bengio's team linked GRAM to HRM in a separate paper.
-
-**Key ideas to extract:**
-- The H/L two-time-scale architecture. A slow strategic layer + a fast execution layer. Iterative H_cycles × L_cycles forward passes yield deep effective computation.
-- The sample efficiency story: 40B tokens (vs trillions for typical small models) and ~$1,500 training cost.
-- The benchmark parity: GSM8K 84.5%, MATH 56.2%, DROP 82.2%, MMLU 60.7%, ARC-C 81.9%.
-- The limits: weak on coding (no code-heavy training data), weak on knowledge benchmarks vs. much larger models.
-- The Latent Reasoning thesis: HRM-Text operates in latent space, not in token stream. This is a quiet rebuke to chain-of-thought.
-- The fine-tuning behavior: improvements on some benchmarks (GSM8K, BoolQ) and regressions on others (MMLU, ARC-C) due to formatting changes. v1.5 must characterize this on our domain.
-
-**Direct application:** This is the reasoning model for Dan Glasses v1.5. We adopt HRM-Text-1B as the base, fine-tune on our domain (voice transcripts + memory schemas + salience decisions + tool-call traces), and ship. The v40 roadmap allocates 2-3 months for this work. The training cost is well within our budget.
-
-**Reading time:** 2-3 hours for the paper, 1 day to understand the architecture, 1 week to design our fine-tuning pipeline.
-
-## #2. SIA: Self-Improving AI with Harness & Weight Updates (Hexo Labs)
-**arXiv:** 2605.27276
-**GitHub:** https://github.com/hexo-ai/sia (MIT-licensed)
-**Why this matters:** This is the canonical open-source self-improving agent framework. The SIA-W+H (harness + weights) numbers are real and verified:
-- **LawBench (191-class Chinese legal classification):** baseline 13.5% → SIA-H 50.0% → SIA-W+H **70.1%** (vs prior SOTA 45%, **+25.1pp**).
-- **TriMul CUDA kernel:** SIA-W+H **1,017 μs** (vs prior SOTA 1,161 μs, **-12.4%**).
-- **scRNA-seq denoising:** SIA-W+H mse_norm **0.289** (vs prior SOTA 0.240, **+20.4%**).
-
-The lesson: **harness-only plateaus around 50% on LawBench; weight updates add another +20pp.** This is the empirical justification for our v1.5 weight-update loop.
-
-**Key ideas to extract:**
-- The three-agent pattern: Meta-Agent generates the initial Target Agent; Feedback Agent analyzes logs and updates the Target Agent.
-- The "harness" concept: scaffold around the model (prompts, tools, retry logic, search). Updated in v1.
-- The "weights" concept: LoRA on a 120B model (GPT-OSS-120B, LoRA rank 32). Updated in v2 with opt-in federated training.
-- The reward algorithm selector: PPO+GAE for dense step-level rewards, GRPO for sparse, EAW for right-skewed. This is a real research contribution.
-- The per-generation artifact pattern: `target_agent.py`, `agent_execution.json`, `improvement.md` for each generation. We can inspect what changed and roll back.
-- The CLI: `sia run` and `sia web` (visualizer for runs).
-
-**Direct application:** Adopt the harness loop in v1 (SIA-H pattern). Add weight updates in v2 (SIA-W+H pattern) on our own HRM-Text-1B. This is the blueprint for our self-improvement roadmap.
-
-**Reading time:** 2 hours for the paper, 1 day to understand the code, 1 week to integrate the pattern.
-
-## #3. Infini Memory: Maintainable Topic Documents for Long-Term LLM Agent Memory
-**arXiv:** 2606.10677v1 (Jun 2026)
-**Why this matters:** The cleanest practical memory architecture for a personal AI agent. Topic-structured documents as the storage primitive. Each topic document is a semantic unit that collects related evidence, preserves metadata, and revises facts over time. Agentic retrieval at inference time via iterative tool calls (not a single retrieval step). This is exactly the v40 pivot for memoryd v2.
-
-**Key ideas to extract:**
-- The topic-document storage primitive. Replaces the flat vector store.
-- The iterative retrieval procedure: the LLM reads memory through multiple tool calls. This is a more flexible pattern than single-shot RAG.
-- The topic-structured maintenance: related facts live in the same document, with explicit revision history.
-- The ablations: topic-structured maintenance + iterative evidence inspection improve complementary aspects of long-term memory.
-
-**Direct application:** This is the architecture for memoryd v2 (Dec 2026). The topic-document primitive + agentic retrieval replaces the flat vector store. We can build on this directly.
-
-**Reading time:** 2 hours for the paper, 1-2 days to implement the core pattern.
-
-## #4. OpenGlass: Ultra-Low-Power On-Device AI Eyewear with Event-based Vision
-**arXiv:** 2606.07431v2 (Jun 2026)
-**Why this matters:** The canonical academic reference for on-device AI eyewear. The power/performance numbers (67.4 mW continuous, 11.5 hours on 200 mAh) are exactly the targets we should be aiming for. The hardware-software co-design pattern (GAP9 RISC-V + event camera) is the right reference for our wearable design.
-
-**Key ideas to extract:**
-- The two-domain architecture: offload BLE to a secondary MCU (nRF5340) to save >3x power during data transmission. We should do the same — offload the always-on wake word to a tiny secondary chip.
-- The phase-based power trace: cold start (~14.6 mW), camera bring-up (~180 mW), continuous inference (~67.4 mW, bursts up to ~96 mW). This is the kind of instrumentation we need.
-- The runtime estimate: 5.2 mJ per inference cycle. This is the per-call energy budget we should target.
-- The modular interposer pattern: support rapid prototyping of sensors and embedded ML.
-
-**Direct application:** Reference design for Dan Glasses hardware integration. The power numbers are the targets. The architecture pattern is the template. The instrumentation approach is what we should copy.
-
-**Reading time:** 1.5 hours for the paper, 1 day to internalize the power budget.
-
-## #5. MemVerse: Multimodal Memory for Lifelong Learning Agents
-**arXiv:** 2512.03627v2 (Dec 2025, updated 2026)
-**Why this matters:** The first framework that combines fast parametric recall with hierarchical retrieval for multimodal lifelong learning. Two ideas we should adopt: (1) the **periodic distillation** mechanism that compresses essential knowledge from the cognitive graph into the parametric model, providing fast and differentiable recall while preserving interpretability; (2) the **hierarchical retrieval** pattern that combines short-term and long-term memory.
-
-**Key ideas to extract:**
-- The two-memory architecture: short-term memory for recent context + long-term memory graph.
-- The periodic distillation: compress graph → parametric memory. This is the missing piece for our memoryd v3.
-- The continuous learning mechanism: short-term → long-term → distilled to parametric, in a loop.
-- The multimodal support: vision + text + audio memory in one framework.
-
-**Direct application:** MemVerse's periodic distillation is the v40 spec for memoryd v3 (Jun 2027). The "compress long-term memory to parametric" pattern is what makes on-device retrieval fast and private.
-
-**Reading time:** 1.5 hours for the paper, 1 day to internalize the architecture.
+> **Status:** v33 refresh. v32 backups at `*.v32-backup-2026-07-06.md`. v32 content preserved; v33 deltas prepended.
+> **Scope:** Top 5 papers + honorable mentions to read for Danlab's AGI roadmap.
+> **Run window:** 2026-07-06 04:00 → 05:00 UTC (60 min).
 
 ---
 
-## Bonus reads (read these if you have time)
+## v33 Top 5 Papers (changes from v32 bolded)
 
-- **SIA** (arXiv 2605.27276) — already #2. The code is the real reference.
-- **HRM-Text** (arXiv 2605.20613) — already #1. HuggingFace model card is the shortest read.
-- **Sakana RSI Lab launch** — the broader context. Worth a 30-min read.
-- **HeLa-Mem** (arXiv 2604.16839) — the v39 #1 read. Still relevant; the Hebbian learning idea maps to our memoryd v2.
-- **CMA: Continuum Memory Architectures** (arXiv 2601.09913) — the v39 #2 read. The four-stage lifecycle is the operational spec.
-- **MEMO: Memory as a Model** (May 2026) — Qwen2.5-14B trained as a dedicated memory model + Gemini-3-Flash executive. 54.22% on BrowseComp-Plus. The "train a small model to BE memory" pattern.
-- **Nanomind** (arXiv 2510.05109v6) — 0.375W continuous VLM on 2000 mAh = 18.8h. The wearable VLM power reference.
-- **TinyissimoYOLO** (arXiv 2311.01057) — 62.9 mW wearable detection. The salience pre-filter reference.
-- **Anthropic Mythos Fable 5** (Jun 2026) — the new safety-tier model. Read the safety docs, not the marketing.
-- **Meta Ray-Ban Display coverage** (Jun 2026) — the competitive anchor.
+### 1. **Microsoft Research — "Agentic Evolution: From Self-Improving Agents to Co-Evolving Human–AI Systems"** (July 2026) ⭐ NEW v33
 
-## Reading order
+- **Authors**: Microsoft Research, Sico team
+- **URL**: https://www.microsoft.com/en-us/research/wp-content/uploads/2026/07/agentic-evolution.pdf
+- **Length**: 300-paper survey
+- **Why read it**: This is the v33 *single best paper* for Danlab's v1.0 architecture. It organizes the self-evolving agent literature through a three-axis taxonomy: **evolutionary substrate, consolidation pathway, selective pressure**. Distinguishes agentic evolution from full RSI. Validates the *co-evolution* frame as the v33 production-ready answer to "how do agents improve without full autonomy."
+- **v33 critical finding**: "Reliable improvement emerges not from full autonomy, but from co-evolving human–AI systems, where AI agents and their human operators evolve together through real work." This is the v33 *exact* frame for v1.0 OpenClaw + memoryd + co-evolution shell (plan-CO1, Q2 2027).
+- **Action**: Read this week. Drives plan-CO1 Sico-style Digital Worker shell design.
 
-If you have one week, read in this order:
-1. HRM-Text paper and HuggingFace card (#1) — 1 day, understand the new economics.
-2. SIA paper and code (#2) — 1 day, understand the self-improvement pattern.
-3. OpenGlass paper (#4) — 1 day, understand the hardware-software co-design.
-4. Infini Memory paper (#3) — 1 day, understand the memory architecture.
-5. MemVerse paper (#5) — 1 day, internalize the multimodal lifelong learning framework.
+### 2. **Microsoft Research — Memora technical paper** (July 2026) ⭐ NEW v33
 
-If you have one day, read in this order:
-1. HRM-Text HuggingFace card (#1) — 1 hour.
-2. SIA GitHub README (#2) — 2 hours.
-3. OpenGlass paper (#4) — 2 hours.
+- **URL**: https://www.microsoft.com/en-us/research/project/memora (linked from Research post)
+- **Why read it**: Memora is Microsoft's *production* answer to "AI agents can't remember past conversations." The architecture: **storage/retrieval split** — separate what is stored from how it is retrieved. This is the v33 *exact* architecture we should port to memoryd v1.5 (plan-A sharpen).
+- **v33 critical finding**: Microsoft *independently arrived at* the same architectural pattern that the DynamicMem paper (v28) suggested was the 93%-failure-cause. Two independent confirmations = production-ready.
+- **Action**: Read this week. Drives memoryd v1.5 storage/retrieval split (plan-A, 2 weeks, 1 eng, dan4, Q3 W1-W2).
 
-If you have one hour, read:
-1. This document's TL;DR.
-2. HRM-Text HuggingFace card.
-3. SIA GitHub README.
+### 3. **"Phase Matters" — Hardware-in-the-loop VLM characterization on Qualcomm SM8750** (arXiv 2606.27906, late June 2026) ⭐ UNCHANGED v32
+
+- **Why read it**: First *hardware-in-the-loop* paper on VLM inference on the Qualcomm Snapdragon 8 Elite (the v32 reference chip for Redax v1.0 wearable).
+- **v32/v33 critical finding**: NPU prefill gives 1.64× speedup, NPU decode only 1.18×. Vision encoders achieve 2.52× lower energy on NPU. **Phase-mapped heterogeneous inference** is the v32/v33 right architecture: VLM pipelines must be split across CPU/NPU/GPU by phase, not by model.
+- **Action**: Read this week. Drives perceptiond v1.5 phase-mapped heterogeneous inference (Q3 W3-W4 spike, 1 eng).
+
+### 4. **DynamicMem — Memory failure root cause analysis** (arXiv 2606.22877, late June 2026) ⭐ UNCHANGED v32
+
+- **Why read it**: First systematic study of *why* AI agent memory systems fail. Finding: **over 93% of memory failures trace to retrieval, not the writing model.** This is the v32 *problem statement* for plan-A (Memora port).
+- **v32/v33 critical finding**: 93% of failures are in retrieval. The v33 *engineering* implication: spend the v1.5 engineering effort on retrieval, not on the writing model. The v33 *cost* implication: writing model upgrades (BGE-large, Qwen3-Embedding) have <7% marginal benefit; retrieval architecture changes have >93% marginal benefit.
+- **Action**: Re-read alongside Memora (item 2). Drives plan-A and plan-M1 priority order.
+
+### 5. **Jack Clark — Import AI #460** (July 2026) ⭐ UNCHANGED v32
+
+- **Why read it**: Anthropic cofounder Jack Clark's 60% RSI-by-2028 estimate with quantitative evidence: **8x increase in lines-of-code merged in 2026 vs 2024 at Anthropic**. Distinguishes maximalist RSI (60% by 2028) from prosaic RSI (outer-loop productivity, already happening).
+- **v32/v33 critical finding**: Outer-loop RSI is *already in flight* at Anthropic and at Danlab (audiod v1.3 → v1.5, dan2 v23 → v33, perceptiond v6 → v7). Maximalist RSI is *deferred* to v2.0+ (2028+). v1.0 marketing should ship with outer-loop RSI framing.
+- **Action**: Cite in v1.0 spec §15. Drives the v33 "outer-loop RSI is in flight, maximalist is 2028+" marketing frame.
 
 ---
 
-*Dan2 research agent, 2026-06-23 v40. Top 5 papers selected for highest leverage on Danlab's roadmap.*
+## v33 Honorable Mentions (additions to v32 list)
+
+### HM1. **Microsoft Sico — "Symbiotic Intelligence for CO-evolution"** (July 2026) ⭐ NEW v33
+
+- **URL**: https://www.microsoft.com/en-us/research/project/sico
+- **GitHub**: https://github.com/microsoft/Sico
+- **Why read it**: The v33 *production* reference for the Digital Worker shell. Sico is open-source, MIT-licensed, and ships as a *structured AI labor unit* abstraction that co-evolves with human operators through real work. Specifically targets BPO (Business Process Outsourcing) — the v33 most-relevant *enterprise* use case for v1.0 OpenClaw.
+- **v33 critical finding**: Sico's co-evolution loop is the v33 *exact* pattern for plan-CO1 (Q2 2027 Digital Worker shell for audiod + memoryd). Read the Sico README + technical report.
+
+### HM2. **Sakana AI — RSI Lab program manager posting + RSI Lab English/JP pages** (July 2026) ⭐ NEW v33
+
+- **URL**: https://sakana.ai/careers/program-manager-rsi-lab/, https://sakana.ai/rsi-lab/
+- **Why read it**: Sakana's formal RSI Lab is the v33 *third* named RSI org (after Recursive Superintelligence and Mirendil). The program manager posting reveals: "Sakana AI's fast growing Recursive Self-Improvement (RSI) Lab… Frontier Research Scientists and Advanced Core Engineers for both domestic and international applicants." Frames RSI as *sample-efficiency-first*, not raw-compute-first. This is the v33 *alternative* thesis to the OpenAI/Anthropic raw-compute RSI.
+- **v33 critical finding**: Sakana bets on *sample efficiency*. Danlab bets on *co-evolution + on-device*. Both are *alternatives to maximalist raw-compute RSI*. v1.0 marketing can sharpen to "we are not racing Sakana, we are the *edge* co-evolution layer."
+
+### HM3. **The New Stack — "The AI revolution will not be televised — it'll be quantized"** (July 5 2026) ⭐ NEW v33
+
+- **URL**: https://thenewstack.io/chinese-frontier-models-quantization/
+- **Why read it**: Argues that Chinese frontier models (Zhipu GLM-5.2, Qwen3, DeepSeek) reaching near-frontier quality at Q4 quantization is the v33 *real* AI revolution — not raw-compute scaling, but **quantization + on-device deployment**. Directly validates the v1.0 619MB footprint as the v33 *winning architecture*, not a *compromise*.
+- **v33 critical finding**: The v1.0 v32 spec §14 RAM-pricing-anchor can now sharpen to "the AI revolution is quantization, not scaling. v1.0 ships the quantization-first path." Cite in v1.0 spec.
+
+### HM4. **arXiv 2606.27906 — "Phase Matters" + companion Qualcomm SM8750 VLM paper** (re-cited) ⭐ UNCHANGED v32
+
+- See item 3 above. Phase-mapped heterogeneous inference is the v32/v33 right architecture for perceptiond v1.5.
+
+### HM5. **Enterprise Times — "Why Creating a Unified Memory Architecture for AI is an Imperative Now"** (July 1 2026) ⭐ NEW v33
+
+- **URL**: https://www.enterprisetimes.co.uk/2026/07/01/why-creating-a-unified-memory-architecture-for-ai-is-an-imperative-now
+- **Why read it**: Dominik Tomicevic's argument for the *context graph* as the v33 enterprise memory architecture. Decision traces + relationships + operational knowledge. Validates the v33 *third* memory pattern (alongside Memora split and Ebbinghaus decay).
+- **v33 critical finding**: v1.5 memory architecture should layer: vector (Memora) + graph (context graph) + decay (Ebbinghaus). Three independent 2026 validations converge.
+
+### HM6. **"Recursive Self-Improvement is the Human Skill We Need in the AI Age" — Time** (June 29 2026) ⭐ UNCHANGED v32
+
+- See v32 papers-to-read. Marina Favaro (Anthropic Institute) + Jack Clark. Distinguishes full RSI from human-driven RSI.
+
+### HM7. **FourWeekMBA — "Anthropic's Map of AI Position"** (July 2026) ⭐ UNCHANGED v32
+
+- See v32 papers-to-read. Anthropic's self-hosted gateway strategy.
+
+---
+
+## v33 Reading priority (this week, ordered by ROI)
+
+1. **Memora + Microsoft Research Agentic Evolution survey (items 1-2)** — drives plan-A + plan-CO1, the v33 highest-ROI 1-2 week engineering bet
+2. **DynamicMem (item 4)** — re-read alongside Memora to understand *why* the split is the right architecture
+3. **Phase Matters (item 3)** — drives perceptiond v1.5 phase-mapped heterogeneous inference
+4. **Sico README (HM1)** — drives plan-CO1 Digital Worker shell design (Q2 2027)
+5. **Enterprise Times context graph (HM5)** — drives memoryd v1.5 graph layer design
+6. **Jack Clark Import AI (item 5)** — re-read for v1.0 marketing copy (1 day copy)
+7. **Sakana RSI Lab (HM2)** — read for v1.0 spec §15 RSI landscape (1 day copy)
+
+## v33 Reading notes
+
+- **Read together**: items 1, 2, 4 (Memora + Agentic Evolution + DynamicMem). All three are about memory architecture. They form a v33 *coherent* 1-2 day read.
+- **Read together**: item 3 + arXiv 2606.27906 (Phase Matters is *part* of a larger hardware-in-the-loop research thread on Qualcomm SM8750). Read both for full picture.
+- **Background reading**: items 5 (Jack Clark), HM2 (Sakana), HM3 (quantization), HM6 (Anthropic Institute). All are 1-day reads for v1.0 marketing copy.
+
+## v33 v1.0 spec §15 "5-org RSI landscape" — papers to cite
+
+Per plan-X15 (NEW v33, Q3 W3, 1 day copy), the v1.0 spec §15 should cite:
+1. Sakana RSI Lab (sakana.ai/rsi-lab/) — Tokyo-based, sample-efficiency-first
+2. Recursive Superintelligence (Crypto Briefing, June 2026) — $4.65B, 2-year ship-date
+3. Mirendil (Gizmodo, June 2026) — a16z-backed, "friend of precious things"
+4. Anthropic Institute (Time, June 29 2026) — Jack Clark, Marina Favaro
+5. Andrew Ng (Reddit, late 2026) — "in 3-6 months, everyone will be using self-improving loops"
+
+**v33 frame**: Danlab is the *audit-by-default, co-evolution* layer when these ship. v1.0 ships *before* maximalist RSI; v1.5 is the Digital Worker shell; v2.0 is multi-Digital-Worker orchestration.

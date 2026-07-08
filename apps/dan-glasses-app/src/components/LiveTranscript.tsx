@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import './LiveTranscript.css';
+import { wsBase } from '../lib/services';
 
 // Tauri v2 exposes its invoke API at window.__TAURI__.core.invoke when the
 // app is running inside the Tauri webview. We probe at module load and use
@@ -19,7 +20,6 @@ const IS_TAURI = TAURI_INVOKE !== null;
 // WebSocket upgrade on /api/audiod/stream to ws://localhost:8091.
 // Using same-origin paths keeps the browser happy with no CORS.
 const HTTP_BASE = '/api/audiod';
-const WS_BASE = '/api/audiod/stream';
 
 export interface TranscriptEvent {
   type: 'transcript';
@@ -69,7 +69,7 @@ export default function LiveTranscript({
   // In Tauri the WS URL comes from the Rust bridge; in browser it's the
   // proxied same-origin path.
   const [wsUrl, setWsUrl] = useState<string>(
-    IS_TAURI ? `ws://localhost:${wsPort}/` : `${WS_BASE}/`
+    IS_TAURI ? `ws://127.0.0.1:${wsPort}/` : `${wsBase(wsPort)}/`
   );
 
   // Transcript WebSocket

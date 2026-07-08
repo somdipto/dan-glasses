@@ -11,9 +11,9 @@ v7.0: expose SalienceResult with motion_score / face_count / trigger_kind
 so the pipeline can record telemetry for the /status and /stats endpoints.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import numpy as np
-from typing import Optional
+from typing import Optional, List, Tuple
 
 CV2_AVAILABLE = False
 try:
@@ -31,6 +31,13 @@ TRIGGER_FACE = "face"
 TRIGGER_BOTH = "both"
 
 
+# A bounding box in the salience frame coordinate system. (x, y, w, h)
+# is the same convention OpenCV's Haar cascade returns: top-left origin,
+# width/height in pixels. `kind` says which detector produced it
+# ("face" today, "motion" when v9.0 derives a change-region bbox).
+BBox = Tuple[int, int, int, int]
+
+
 @dataclass
 class SalienceResult:
     """Result of evaluating a single frame.
@@ -38,12 +45,16 @@ class SalienceResult:
     `salient` is the boolean verdict. `motion_score` and `face_count` are
     the raw signals that drove the verdict. `kind` is one of TRIGGER_*
     so the pipeline can report WHY it considered the frame interesting.
+    `bboxes` carries the actual face rectangles (and, on motion-triggered
+    frames, the changed-region bounding box) so the publisher and the
+    /frames endpoint can render annotations on the thumbnail.
     """
 
     salient: bool
     motion_score: float
     face_count: int
     kind: str
+    bboxes: List[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -51,6 +62,7 @@ class SalienceResult:
             "motion_score": round(self.motion_score, 6),
             "face_count": self.face_count,
             "kind": self.kind,
+            "bboxes": list(self.bboxes),
         }
 
 
@@ -97,9 +109,22 @@ class SalienceDetector:
         Always computes motion_score so callers can route through the
         SceneGate even on non-salient frames (the gate consumes the raw
         score, not just the boolean).
+
+        v9.0 — also returns `bboxes` for everything that drove the
+        verdict: face rectangles from the Haar cascade (in the salience
+        frame's coordinate system), and, for motion-triggered frames,
+        the bounding box of the changed-region mask. The pipeline stores
+        the result on the description event so the UI can draw overlays
+        on /frames/<id>.jpg.
         """
-        motion_score = self._motion_score(frame)
-        face_count = int(self._face_score(frame))
+        motion_score, face_rects, motion_region = self._compute_signals(frame)
+        face_count = len(face_rects)
+        bboxes: List[dict] = []
+        for (x, y, w, h) in face_rects:
+            bboxes.append({"x": int(x), "y": int(y), "w": int(w), "h": int(h), "kind": "face"})
+        if motion_region is not None:
+            mx, my, mw, mh = motion_region
+            bboxes.append({"x": int(mx), "y": int(my), "w": int(mw), "h": int(mh), "kind": "motion"})
 
         motion_hit = motion_score > self.motion_threshold
         face_hit = face_count > 0
@@ -126,16 +151,35 @@ class SalienceDetector:
             motion_score=motion_score,
             face_count=face_count,
             kind=kind,
+            bboxes=bboxes,
         )
 
-    def _motion_score(self, frame: np.ndarray) -> float:
-        """Compute motion score (0.0 to 1.0)."""
+    # ------------------------------------------------------------------
+    # Internals — split out the three signals (motion, faces, region) so
+    # tests and the bbox endpoint can call them individually if needed.
+    # ------------------------------------------------------------------
+
+    def _compute_signals(self, frame: np.ndarray):
+        """Run all three detectors and return (motion_score, face_rects, motion_region)."""
+        motion_score, motion_region = self._motion_score_with_region(frame)
+        face_rects = self._face_rects(frame)
+        return motion_score, face_rects, motion_region
+
+    def _motion_score_with_region(self, frame: np.ndarray):
+        """Like _motion_score but also returns the bounding box of the changed pixels.
+
+        Returns (score, None) on the first frame (no background yet) or
+        (score, (x, y, w, h)) once a background exists. The bbox is in
+        the salience frame coordinate system (i.e. the frame passed in),
+        not the grayscale image — both share the same w/h since we never
+        resize before differencing.
+        """
         gray = self._to_grayscale(frame)
 
         if self._background is None:
             self._background = gray.astype(np.float32)
             self._frame_count = 0
-            return 0.0
+            return 0.0, None
 
         if self._frame_count > 0 and self._frame_count % self.background_update_interval == 0:
             self._background = 0.95 * self._background + 0.05 * gray.astype(np.float32)
@@ -144,12 +188,14 @@ class SalienceDetector:
         changed_pixels = diff > self.pixel_delta_threshold
         self._frame_count += 1
 
-        return float(np.mean(changed_pixels))
+        score = float(np.mean(changed_pixels))
+        region = _bbox_of_mask(changed_pixels) if changed_pixels.any() else None
+        return score, region
 
-    def _face_score(self, frame: np.ndarray) -> float:
-        """Compute face score (number of faces detected)."""
+    def _face_rects(self, frame: np.ndarray) -> List[BBox]:
+        """Return face rectangles in the original frame coordinate system."""
         if not CV2_AVAILABLE or self._face_cascade is None:
-            return 0.0
+            return []
 
         try:
             gray = self._to_grayscale(frame)
@@ -160,9 +206,31 @@ class SalienceDetector:
                 minNeighbors=self.face_min_neighbors,
                 minSize=(self.face_min_size, self.face_min_size),
             )
-            return float(len(faces))
+            if len(faces) == 0:
+                return []
+            # Scale rectangles back up from 320x240 to the original frame
+            # dimensions. The cascade runs on the downsampled image but
+            # we want bboxes in the salience frame space so the overlay
+            # lines up pixel-perfect with the thumbnail.
+            h, w = gray.shape[:2]
+            sx = w / 320.0
+            sy = h / 240.0
+            out: List[BBox] = []
+            for (x, y, fw, fh) in faces:
+                out.append((int(round(x * sx)), int(round(y * sy)),
+                            int(round(fw * sx)), int(round(fh * sy))))
+            return out
         except Exception:
-            return 0.0
+            return []
+
+    def _motion_score(self, frame: np.ndarray) -> float:
+        """Backwards-compatible scalar wrapper — kept for tests that
+        only want the score, not the region. Calls the unified path."""
+        return self._motion_score_with_region(frame)[0]
+
+    def _face_score(self, frame: np.ndarray) -> float:
+        """Backwards-compatible face-count wrapper."""
+        return float(len(self._face_rects(frame)))
 
     def _to_grayscale(self, frame: np.ndarray) -> np.ndarray:
         """Convert RGB/BGR frame to grayscale."""
@@ -176,3 +244,20 @@ class SalienceDetector:
         """Manually reset background frame."""
         self._background = None
         self._frame_count = 0
+
+
+def _bbox_of_mask(mask: np.ndarray) -> Optional[BBox]:
+    """Tight bounding box around True pixels in a 2D boolean mask.
+
+    Returns (x, y, w, h) in mask coordinates or None if the mask is empty.
+    Uses np.argwhere for clarity — masks are 480x640 (≈300k pixels) and
+    this is called only on salient frames, so the cost is negligible.
+    """
+    if not mask.any():
+        return None
+    ys, xs = np.where(mask)
+    x0 = int(xs.min())
+    y0 = int(ys.min())
+    x1 = int(xs.max()) + 1
+    y1 = int(ys.max()) + 1
+    return (x0, y0, x1 - x0, y1 - y0)

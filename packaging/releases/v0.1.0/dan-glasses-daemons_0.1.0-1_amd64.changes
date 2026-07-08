@@ -1,0 +1,27 @@
+Format: 1.8
+Date: Mon, 16 Jun 2026 06:20:00 +0530
+Source: dan-glasses-daemons
+Binary: dan-glasses-daemons
+Architecture: all
+Version: 0.1.0-1
+Distribution: unstable
+Urgency: medium
+Maintainer: DanLab <som@danlab.dev>
+Changed-By: somdipto <somdiptonandy@gmail.com>
+Description:
+ dan-glasses-daemons - Dan Glasses daemon services
+Changes:
+ dan-glasses-daemons (0.1.0-1) unstable; urgency=medium
+ .
+   * Initial Debian package.
+   * Six systemd units: audiod, perceptiond, memoryd, toold, ttsd, os-toold.
+   * All daemons bind to loopback by default.
+Checksums-Sha1:
+ fc4db65708c3abb96d69ff042de017565cb8dfd3 57108 dan-glasses-daemons_0.1.0-1_all.deb
+ dd3e38e1e56bb2d9680851b081b511edb3611664 5644 dan-glasses-daemons_0.1.0-1_amd64.buildinfo
+Checksums-Sha256:
+ 0bce8eed2e2b4f3abad568d6b0a4f7091cf6ce510e84854114cca55700b7e3b7 57108 dan-glasses-daemons_0.1.0-1_all.deb
+ d865ef1522c9b81c7baaa788946ef77b00db726a6193216dd611f8b336fbbead 5644 dan-glasses-daemons_0.1.0-1_amd64.buildinfo
+Files:
+ fd4886b4f0686a2a63fdd66fccb5ddb3 57108 utils optional dan-glasses-daemons_0.1.0-1_all.deb
+ 5a624b92d4da1d7c01813058c060acce 5644 utils optional dan-glasses-daemons_0.1.0-1_amd64.buildinfo

@@ -4,7 +4,7 @@ import pytest
 import httpx
 
 
-TTSD_URL = "http://localhost:8743"
+TTSD_URL = "http://127.0.0.1:8743"
 
 
 @pytest.mark.asyncio

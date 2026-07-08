@@ -222,7 +222,7 @@ class TranscriptPublisher:
         if mode in ("socket", "both"):
             self._setup_socket()
 
-        if mode in ("websocket", "both", "stdout"):
+        if mode in ("websocket", "both"):
             self._start_ws_server()
 
     def _next_seq(self) -> int:
@@ -252,6 +252,8 @@ class TranscriptPublisher:
                 server.bind(("127.0.0.1", self.ws_port))
                 server.listen(8)
                 server.settimeout(1.0)
+                if self.ws_port == 0:
+                    self.ws_port = server.getsockname()[1]
             except OSError as e:
                 print(f"audiod: ws bind failed: {e}", flush=True)
                 return
@@ -425,7 +427,7 @@ class TranscriptPublisher:
         ws_ok = True
         if mode in ("socket", "both"):
             socket_ok = self._sock is not None
-        if mode in ("websocket", "both", "ws", "stdout"):
+        if mode in ("websocket", "both", "ws"):
             ws_ok = (self._ws_server is not None) and self._ws_server.is_alive()
         ready = stdout_ok and socket_ok and ws_ok
         return (ready, {

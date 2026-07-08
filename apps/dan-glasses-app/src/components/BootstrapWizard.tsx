@@ -1,23 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import './BootstrapWizard.css';
+import {
+  type ServiceId,
+  PORTS,
+  apiBase,
+  ALL_SERVICES,
+  HEALTH_PATHS,
+  APP_HEALTH_AGGREGATOR_PATH,
+} from '../lib/services';
 
-type ServiceId = 'memoryd' | 'toold' | 'ttsd' | 'audiod' | 'perceptiond';
-
-interface ServicePortMap {
-  memoryd: number;
-  toold: number;
-  ttsd: number;
-  audiod: number;
-  perceptiond: number;
-}
-
-const PORTS: ServicePortMap = {
-  memoryd: 8741,
-  toold: 8742,
-  ttsd: 8743,
-  audiod: 8090,
-  perceptiond: 8092,
-};
+const STORAGE_KEY = 'dan-glasses:bootstrap:v1';
+const POLL_INTERVAL_MS = 3000;
 
 interface HealthState {
   ok: boolean;
@@ -33,7 +26,7 @@ interface StepState {
   detail?: string;
 }
 
-const STEP_IDS: ServiceId[] = ['memoryd', 'toold', 'ttsd', 'audiod', 'perceptiond'];
+const STEP_IDS: ServiceId[] = ALL_SERVICES as unknown as ServiceId[];
 
 async function fetchJSON<T>(url: string, init?: RequestInit, timeoutMs = 8000): Promise<T> {
   const res = await fetch(url, {
@@ -45,30 +38,126 @@ async function fetchJSON<T>(url: string, init?: RequestInit, timeoutMs = 8000): 
   return res.json() as Promise<T>;
 }
 
-async function checkHealth(svc: ServiceId): Promise<HealthState> {
-  const port = PORTS[svc];
+interface AggregatorResponse {
+  ok_count: number;
+  total: number;
+  duration_ms: number;
+  services: Record<string, {
+    ok: boolean;
+    port: number;
+    upstream: string;
+    detail?: string;
+    message?: string;
+    status?: number;
+    duration_ms?: number;
+  }>;
+}
+
+function emptySteps(): Record<ServiceId, StepState> {
+  return Object.fromEntries(STEP_IDS.map(s => [s, { status: 'pending', message: 'not run' }])) as Record<ServiceId, StepState>;
+}
+
+function loadPersistedSteps(): Record<ServiceId, StepState> {
+  const base = emptySteps();
+  if (typeof window === 'undefined') return base;
   try {
-    const res = await fetch(`http://localhost:${port}/health`, {
-      signal: AbortSignal.timeout(2500),
-    });
-    if (!res.ok) return { ok: false, message: `HTTP ${res.status}`, lastChecked: Date.now() };
-    const data = await res.json().catch(() => ({}));
-    return {
-      ok: true,
-      message: typeof data === 'object' && data && 'model' in data
-        ? `healthy · ${(data as { model?: string }).model ?? 'up'}`
-        : `healthy on :${port}`,
-      lastChecked: Date.now(),
-    };
-  } catch (e) {
-    return { ok: false, message: `unreachable on :${port}`, lastChecked: Date.now() };
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return base;
+    const parsed = JSON.parse(raw) as { steps?: Record<string, StepState> };
+    if (!parsed || typeof parsed !== 'object' || !parsed.steps) return base;
+    // Merge: only accept steps for known service ids; coerce status to a
+    // valid StepStatus; fall back to 'pending' on any malformed value.
+    const validStatuses: StepStatus[] = ['pending', 'running', 'ok', 'fail'];
+    for (const s of STEP_IDS) {
+      const incoming = parsed.steps[s];
+      if (incoming && typeof incoming === 'object' && typeof incoming.message === 'string') {
+        base[s] = {
+          status: validStatuses.includes(incoming.status as StepStatus)
+            ? (incoming.status as StepStatus)
+            : 'pending',
+          message: incoming.message,
+          detail: typeof incoming.detail === 'string' ? incoming.detail : undefined,
+        };
+      }
+    }
+    return base;
+  } catch {
+    return base;
   }
+}
+
+function persistSteps(steps: Record<ServiceId, StepState>) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ steps, savedAt: Date.now() }));
+  } catch {
+    /* quota / private-mode — silently skip; UI keeps working */
+  }
+}
+
+async function checkHealthAggregator(): Promise<Record<ServiceId, HealthState>> {
+  // The server-side aggregator fans out to all 5 daemons in parallel and
+  // returns one JSON envelope. This replaces 5 separate fetches per tick
+  // with a single request, and centralises the "what's healthy" rule.
+  const lastChecked = Date.now();
+  try {
+    const res = await fetch(APP_HEALTH_AGGREGATOR_PATH, {
+      signal: AbortSignal.timeout(3500),
+    });
+    if (!res.ok) {
+      // Fall back to per-service direct probes so the UI still works when
+      // the SPA server is offline (e.g. running the dist from a CDN).
+      return await fallbackDirectHealth(lastChecked);
+    }
+    const data = (await res.json()) as AggregatorResponse;
+    const out = {} as Record<ServiceId, HealthState>;
+    for (const svc of STEP_IDS) {
+      const entry = data.services[svc];
+      if (entry?.ok) {
+        out[svc] = {
+          ok: true,
+          message: entry.message || `healthy on :${entry.port}`,
+          lastChecked,
+        };
+      } else {
+        out[svc] = {
+          ok: false,
+          message: entry?.detail || `unreachable on :${PORTS[svc]}`,
+          lastChecked,
+        };
+      }
+    }
+    return out;
+  } catch {
+    return await fallbackDirectHealth(lastChecked);
+  }
+}
+
+async function fallbackDirectHealth(lastChecked: number): Promise<Record<ServiceId, HealthState>> {
+  const out = {} as Record<ServiceId, HealthState>;
+  await Promise.all(
+    STEP_IDS.map(async (svc) => {
+      try {
+        const res = await fetch(`${apiBase(PORTS[svc])}${HEALTH_PATHS[svc]}`, {
+          signal: AbortSignal.timeout(2500),
+        });
+        if (res.ok) {
+          out[svc] = { ok: true, message: `healthy on :${PORTS[svc]}`, lastChecked };
+        } else {
+          out[svc] = { ok: false, message: `HTTP ${res.status}`, lastChecked };
+        }
+      } catch {
+        out[svc] = { ok: false, message: `unreachable on :${PORTS[svc]}`, lastChecked };
+      }
+    }),
+  );
+  return out;
 }
 
 async function fetchVoices(): Promise<string[]> {
   try {
     const data = await fetchJSON<{ voices?: string[] } | string[]>(
-      `http://localhost:${PORTS.ttsd}/voices`,
+      `${apiBase(PORTS.ttsd)}/voices`,
     );
     if (Array.isArray(data)) return data;
     if (Array.isArray(data.voices)) return data.voices;
@@ -77,7 +166,7 @@ async function fetchVoices(): Promise<string[]> {
 }
 
 async function speakText(text: string, voice: string): Promise<Blob> {
-  const res = await fetch(`http://localhost:${PORTS.ttsd}/speak`, {
+  const res = await fetch(`${apiBase(PORTS.ttsd)}/speak`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text, voice }),
@@ -91,7 +180,7 @@ async function memoryRoundtrip(displayName: string, voice: string) {
   const results: { type: string; id?: number; queryHit?: number }[] = [];
 
   // episodic
-  const epi = await fetchJSON<{ id: number }>(`http://localhost:${PORTS.memoryd}/memories`, {
+  const epi = await fetchJSON<{ id: number }>(`${apiBase(PORTS.memoryd)}/memories`, {
     method: 'POST',
     body: JSON.stringify({
       type: 'episodic',
@@ -101,7 +190,7 @@ async function memoryRoundtrip(displayName: string, voice: string) {
   results.push({ type: 'episodic', id: epi.id });
 
   // semantic — user preference
-  const pref = await fetchJSON<{ id: number }>(`http://localhost:${PORTS.memoryd}/memories`, {
+  const pref = await fetchJSON<{ id: number }>(`${apiBase(PORTS.memoryd)}/memories`, {
     method: 'POST',
     body: JSON.stringify({
       type: 'semantic',
@@ -111,7 +200,7 @@ async function memoryRoundtrip(displayName: string, voice: string) {
   results.push({ type: 'semantic', id: pref.id });
 
   // semantic — voice choice
-  const vc = await fetchJSON<{ id: number }>(`http://localhost:${PORTS.memoryd}/memories`, {
+  const vc = await fetchJSON<{ id: number }>(`${apiBase(PORTS.memoryd)}/memories`, {
     method: 'POST',
     body: JSON.stringify({
       type: 'semantic',
@@ -121,7 +210,7 @@ async function memoryRoundtrip(displayName: string, voice: string) {
   results.push({ type: 'semantic', id: vc.id });
 
   // procedural
-  const proc = await fetchJSON<{ id: number }>(`http://localhost:${PORTS.memoryd}/memories`, {
+  const proc = await fetchJSON<{ id: number }>(`${apiBase(PORTS.memoryd)}/memories`, {
     method: 'POST',
     body: JSON.stringify({
       type: 'procedural',
@@ -132,7 +221,7 @@ async function memoryRoundtrip(displayName: string, voice: string) {
 
   // query: must find at least one — memoryd /query returns flat array
   const query = await fetchJSON<Array<{ id: number; type: string; score: number }>>(
-    `http://localhost:${PORTS.memoryd}/query?text=bootstrap+setup&top_k=5`,
+    `${apiBase(PORTS.memoryd)}/query?text=bootstrap+setup&top_k=5`,
   );
   const hits = Array.isArray(query) ? query.length : 0;
 
@@ -148,11 +237,11 @@ async function probeKittenTTS(): Promise<{
   const start = performance.now();
   const [voices, models] = await Promise.all([
     fetchJSON<string[] | { voices?: string[] }>(
-      `http://localhost:${PORTS.ttsd}/voices`,
+      `${apiBase(PORTS.ttsd)}/voices`,
       undefined,
       8000,
     ),
-    fetchJSON<string[]>(`http://localhost:${PORTS.ttsd}/models`, undefined, 8000),
+    fetchJSON<string[]>(`${apiBase(PORTS.ttsd)}/models`, undefined, 8000),
   ]);
   const voiceList = Array.isArray(voices)
     ? voices
@@ -171,16 +260,14 @@ async function runToolTest() {
   const data = await fetchJSON<{
     success: boolean;
     results: Record<string, { ok: boolean }>;
-  }>(`http://localhost:${PORTS.toold}/test`, undefined, 15000);
+  }>(`${apiBase(PORTS.toold)}/test`, undefined, 15000);
   return data;
 }
 
 export default function BootstrapWizard() {
+  const [stepState, setStepState] = useState<Record<ServiceId, StepState>>(loadPersistedSteps);
   const [health, setHealth] = useState<Record<ServiceId, HealthState | null>>(
     Object.fromEntries(STEP_IDS.map(s => [s, null])) as Record<ServiceId, HealthState | null>,
-  );
-  const [stepState, setStepState] = useState<Record<ServiceId, StepState>>(
-    Object.fromEntries(STEP_IDS.map(s => [s, { status: 'pending', message: 'not run' }])) as Record<ServiceId, StepState>,
   );
   const [voices, setVoices] = useState<string[]>([]);
   const [voice, setVoice] = useState<string>('expr-voice-2-m');
@@ -192,20 +279,23 @@ export default function BootstrapWizard() {
   const [finalSummary, setFinalSummary] = useState<string>('');
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Live status — poll all services every 3s
+  // Persist step state across reloads. We snapshot only after a manual
+  // setStatus() so transient 'running' blinks don't clobber saved progress.
+  useEffect(() => {
+    persistSteps(stepState);
+  }, [stepState]);
+
+  // Live status — one aggregator call per tick (was 5 per-service fetches).
   useEffect(() => {
     let cancelled = false;
     async function tick() {
-      const results = await Promise.all(STEP_IDS.map(s => checkHealth(s)));
+      const next = await checkHealthAggregator();
       if (cancelled) return;
-      const next: Record<ServiceId, HealthState> = { ...(health as Record<ServiceId, HealthState>) };
-      STEP_IDS.forEach((s, i) => { next[s] = results[i]; });
       setHealth(next);
     }
     tick();
-    const id = setInterval(tick, 3000);
+    const id = setInterval(tick, POLL_INTERVAL_MS);
     return () => { cancelled = true; clearInterval(id); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Load voices when ttsd becomes healthy
@@ -228,12 +318,12 @@ export default function BootstrapWizard() {
 
   async function runServiceHealthStep(svc: ServiceId) {
     setStatus(svc, 'running', 'checking…');
-    const h = await checkHealth(svc);
-    if (!h.ok) {
-      setStatus(svc, 'fail', h.message);
+    const h = await checkHealthAggregator() as unknown as Record<ServiceId, HealthState>;
+    if (!h[svc]?.ok) {
+      setStatus(svc, 'fail', h[svc]?.message);
       return false;
     }
-    setStatus(svc, 'ok', h.message);
+    setStatus(svc, 'ok', h[svc]?.message);
     return true;
   }
 

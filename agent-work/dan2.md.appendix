@@ -1,0 +1,62 @@
+
+---
+
+## Scheduled Re-run: 2026-06-07 06:20 IST / 00:50 UTC (this entry)
+
+**Task:** Build audiod v2 — fix the silent failures in the existing "shipped" service.
+
+**Audit of current audiod v1.0 (it's running, tests pass, BUT the frontend cannot connect):**
+
+### Critical bugs found
+
+1. **WebSocket handshake missing `Sec-WebSocket-Accept` header** — publish.py:74-77 returns 101 with no accept hash. **Browsers reject → LiveTranscript never receives events.** Confirmed by raw socket test.
+
+2. **WebSocket frames are raw JSON, not RFC 6455 framed** — publish.py:101 `client.sendall(line.encode())` sends `{"type":"transcript"...}` as plain text. Browsers will not parse as `onmessage` event. Even with the handshake fix, no events flow.
+
+3. **Tests pass but don't catch real bugs** — 23/23 passing. Coverage gaps:
+   - No browser-WS-client test (would have caught bugs 1+2)
+   - test_pipeline.py:49 uses `detector.vad._model = None` (wrong attr, should be `_session`)
+   - No end-to-end synthetic-audio → transcript → WS test
+
+4. **VAD hidden-state shape fragility** — Silero VAD v4 uses [2,1,64], v5 uses [1,1,64]. vad.py allocates [1,1,64] hardcoded. Works because the cached model is compatible, but will silently break on model upgrade.
+
+5. **No backpressure on slow WS clients** — `client.sendall()` blocks the publish loop. One slow client stalls all transcripts.
+
+6. **No event IDs / sequence numbers** — downstream can't dedupe or ack.
+
+7. **whisper-cli timeout 10s** — too long for short segments. Subprocess spawn cost ~50ms; base model runs <500ms for 2s audio. 2s is enough.
+
+8. **force_flush from PTT doesn't reset `_segment_start_ms`** — leading to wrong timestamps in next segment.
+
+9. **`_callbacks` list mutated without lock** — capture.py audio thread iterates, main thread appends.
+
+10. **Mock capture loop never times out cleanly** — when running with real mic, fallback path leaves a thread eating CPU if PortAudio init succeeds but the stream errors mid-flight.
+
+### Plan (ship in this run)
+
+1. **Replace publish.py** with a real RFC 6455 implementation:
+   - Compute `Sec-WebSocket-Accept` from client key
+   - Frame every outbound message as `0x81 + length + payload`
+   - Per-client send queue (thread), drop on overflow
+   - Add `?from_seq=N` for client resume
+2. **Add `event_id`, `seq`, `session_id`** to all transcripts.
+3. **Fix PTT force_flush** to reset timestamp atomically.
+4. **Add `tests/test_ws_browser.py`** — full RFC 6455 server test using a real browser-shaped client.
+5. **Add `tests/test_e2e.py`** — synthetic audio → whisper → transcript → WS delivery.
+6. **Detect Silero VAD model version at load**, allocate correct hidden state shape.
+7. **Tighten whisper timeout** to 2s (sufficient for base model on 2s audio).
+8. **Add `test_pipeline.py` fixes** — replace `_model` with `_session`.
+9. **Update SPEC.md** with v2 changes.
+10. **Re-run all tests, restart audiod, verify with a proper browser-shaped WS client that frames flow end-to-end.**
+
+### Live system state (re-verified 00:50 UTC)
+```
+audiod       :8090 + WS 8091 ✅  running 20:13, 143MB RSS, whisper-cli + VAD ready
+perceptiond  :8092 ✅            (from dan1's prior runs)
+memoryd      :8741 ✅
+toold        :8742 ✅
+ttsd         :8743 ✅
+```
+
+**Telegram deliverable: NONE** (scheduled task — no channel specified in <agent_meta>).
+

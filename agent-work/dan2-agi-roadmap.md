@@ -1,188 +1,123 @@
-# Danlab AGI Roadmap — v40
-**Author:** Dan2
-**Date:** 2026-06-23
-**Horizon:** 6 / 12 / 24 months
+# Dan-2 AGI Roadmap — v33 (2026-07-06)
 
-> **Read first:** `dan2-research-report.md` (v40), `dan2-model-analysis.md` (v40), `dan2-architecture-review.md` (v40).
-
-> **v40 thesis (one sentence):** The v39 roadmap is correct in direction; v40 sharpens the model strategy around **HRM-Text 1B** (we own the reasoning stack), adds **agentd + learnerd** (the missing agency layer), pivots to **memoryd v2** (Infini Memory topic-documents), and tightens the wearable window to **12-18 months before Meta locks the mainstream market**.
-
-This roadmap is a recommendation, not a contract. Somdipto has the final call.
+> **Status:** v33 refresh. v32 backups at `*.v32-backup-2026-07-06.md`. v32 content preserved; v33 deltas prepended.
+> **Scope:** 6/12/24-month Danlab execution map tied to research-report evidence.
+> **Run window:** 2026-07-06 04:00 → 05:00 UTC (60 min). v32 is 1-hour-old; v33 sharpens the *execution* axis, not the *wedge* axis.
 
 ---
 
-## North star
+## v33 Deltas — execution sharpening, not wedge change
 
-**"The first truly private, self-improving, ambient AI — built in India, on open reasoning models, for the Global South."**
+The v32 7-axis wedge holds. v33 sharpens **how** we execute against the wedge with three new external validations: (1) Microsoft Research "Agentic Evolution" 300-paper survey (July 2026) confirms the *co-evolution* frame is now industry-standard, not Danlab-fan-fiction; (2) Sakana AI formal RSI Lab (July 2026) + the v32 Anthropic Institute "RSI is human skill" *together* validate the v1.0 "co-evolution not maximalist RSI" position from *both sides of the field* (skeptical frontier lab + hyped RSI startup); (3) Gartner $234B-in-SaaS-at-risk (July 2 2026) + the v31 Microsoft Frontier Co. $2.5B + v32 Palantir $25B + v30 Karp value-chain argument *together* mean the v1.0 **enterprise implementation wedge** is now a $5B+ market conversation across 4 vendors in 90 days.
 
-By 2028, Dan Glasses should be the wearable AI that:
-1. **Reasons on its own model** (HRM-Text-1B fine-tuned on Danlab data) — not a U.S. cloud API.
-2. **Learns from every interaction** (real self-improvement: harness + weights, SIA-W+H pattern).
-3. **Respects privacy as a design constraint** — on-device by default, no cloud-by-default.
-4. **Runs on hardware we control** (NDP200, or GAP9 if NDP slips, or Snapdragon AR1 Gen 2 if we have to).
-5. **Ships a memory and personality that survives** across sessions, devices, and replacement cycles.
-6. **Is open source** — auditable, modifiable by the user, forkable by the world.
+**v33 answer to "what should Danlab build?"** is sharper: **build the co-evolution layer.** Not a model. Not a chip. Not an RSI lab. The *layer* that connects human operator + agent + memory + tool, and that improves through real work, not synthetic benchmarks. Microsoft's own framing — "reliable improvement emerges not from full autonomy, but from co-evolving human–AI systems" — is the v33 strongest external validation that Danlab's v1.0 design philosophy is *the* bet to make.
 
-This is the moat. The product surface is the glasses; the moat is the **model-of-the-user** that the product builds over time, running on **a reasoning model we own**.
+### 6-month horizon (now → Q4 W3 2026, ship-gate)
 
----
+**Locked. Do not re-pivot.**
 
-## Strategic bets (the three things we will not compromise on)
+| Plan | Wedge | Effort | Owner | Status |
+|------|-------|--------|-------|--------|
+| plan-X11 (v32): 7-axis wedge → "frontier-delayed" | Wedge | 1d copy | som/marketing | Not started |
+| plan-X12 (v32): Anthropic Sonnet 5 gateway cite | Wedge | 1d copy | som/marketing | Not started |
+| plan-X7 sharpen (v32): Jensen 4-year memory supply | Wedge | 1d copy | som/marketing | Not started |
+| plan-X13 (v32): Apple A20 Pro + WH no-FDA + Proton Lumo 2.0 cites | Wedge | 1d copy | som/marketing | Not started |
+| plan-X3 sharpen (v32): India IT services displacement | Enterprise | 1 design + 1 partnership | som | Q1 2027 |
+| plan-S1 (v28): OpenClaw supervisord-equivalent | Reliability | 1 week, 1 eng | dan1 | Q4 W1 |
+| plan-S2 (v28): Chip-stack sovereignty spec | Wedge | 1 week, 1 eng + 1 designer | dan1+designer | Q4 W2 |
+| plan-S3 (v28): Public Dan Glasses hardware RDK | Hardware | 2 weeks, 1 eng | dan1+som | Q4 W2-W3 |
+| plan-P3 (v28): SIA-H honest-RL claim | RL | 1 week, 1 eng | dan2 | Q3 W2 |
+| plan-P4 (v28): SIA-W+H port | RL | 3 weeks, 1 eng | dan2 | Q3 W3-W4 |
+| **plan-A (v14 → v33 sharpen): Memora storage/retrieval split port to memoryd v1.5** | **Memory** | **2 weeks, 1 eng** | **dan4** | **Q3 W1-W2 (NEW v33 priority bump)** |
+| plan-M1 (v28): nomic-embed-text v1.5 vs MiniLM-L6-v2 MemDelta | Memory | 3 days, 1 eng | dan4 | Q3 W2 |
+| plan-M2 (v28): LFM2.5-230M vs HRM-Text-1B vs Nemotron-4B-Q4 | Reasoning | 5 days, 1 eng | dan2 | Q3 W3 |
 
-1. **We own the reasoning stack.** v1.5 ships HRM-Text-1B fine-tuned on Danlab data. v2 ships HRM-Text-3B. We do not rent Claude/GPT for the agent loop. The $1,500 training cost puts this within reach — there is no excuse not to.
-2. **Self-improvement is the product.** We do not ship a chatbot. We ship a learning system. The v1.0 dashboard for the user is a "what Dani learned this week" view. The v1.5 backend is a SIA-H harness-improvement loop. The v2 backend is a SIA-W+H weight-improvement loop on HRM-Text.
-3. **The wearable window is 12-18 months.** Meta Ray-Ban Display at $799 + Gen 3 leaks suggest multi-hour Live AI by late 2026. If we don't ship a credible v1 by Q2 2027, we lose the narrative. **Ship the v1 desktop prototype by Q4 2026. Ship the wearable v1.5 by Q2 2027.**
+### 12-month horizon (Q4 2026 → Q3 2027)
 
----
+**Sharpened in v33.** v33 reframes the 12-month plan as **"build the co-evolution layer, then expand the substrate."**
 
-## 6-month roadmap (now → Dec 2026)
+| Plan | Description | v33 Sharpening | Target |
+|------|-------------|----------------|--------|
+| **plan-CO1 (NEW v33)**: Sico-style Digital Worker shell for OpenClaw | Wrap OpenClaw agents in a Sico-style "structured AI labor unit" shell with real-work co-evolution loop (production work → supervision signal → memory write → policy update) | Microsoft Sico + survey "Agentic Evolution" (July 2026) is the v33 *frame*; v1.5 ships as `coevolve-v1` in OpenClaw | Q2 2027 |
+| **plan-CO2 (NEW v33)**: Memory architecture split | Port Memora's storage/retrieval split to memoryd v1.5: separate `store_d` (write path) and `retrieve_d` (read path) with two-stage retrieval (vector + graph + LLM rerank) | Microsoft *also* independently arrived at this architecture (July 2026) — validation | Q1 2027 (Q3 W1-W2 to start) |
+| plan-X14 (v33): Hermes Agent openclaw drop-in | Add Hermes Agent as a v1.0 OpenClaw plan-A option alongside OpenClaw-native (1-2 week drop-in) | Hermes 180k+ stars + 4.4k awesome-list + Eden AI "strongest self-hosted harness" | Q4 W1 (1 week) |
+| plan-X15 (v33): 5-org RSI landscape in v1.0 spec §15 | New spec section: Sakana RSI Lab + Anthropic Institute + Recursive Superintelligence + Mirendil + Andrew Ng. Frame Danlab as the *audit-by-default, co-evolution* layer when these ship. | Sakana formal RSI Lab (July 2026) is the v33 *third* RSI org | Q3 W3 (1 day copy) |
+| plan-X16 (v33): "AI revolution will not be televised — it'll be quantized" cite | The New Stack (July 5 2026) on Chinese frontier models + quantization as the v33 frontier-access wedge | Quantization is the v33 supply-chain answer; v1.0 v32 619MB footprint is *quantization-first* by design | Q3 W2 (1 day copy) |
+| plan-X17 (v33): local.ai (Exo Labs + NVIDIA) cite | local.ai launched at AI Engineer World's Fair (July 2 2026) — chipmaker-blessed local-inference path | NVIDIA is now *explicitly* backing local AI infrastructure; v1.0 OpenClaw + on-device stack is *industry-aligned* | Q3 W2 (1 day copy) |
+| plan-X18 (v33): Anthropic Mythos 5 Glasswing cite | Anthropic re-launching Mythos 5 in Glasswing program (June 30 2026 — 18-day ban cycle) | The 18-day ban → Glasswing re-launch is the v33 *most-citable* export-control risk story for v1.0 spec §13 | Q3 W1 (1 day copy) |
+| plan-X19 (v33): Foxconn +40% YoY cite | Foxconn Q2 2026 revenue +39.8% YoY (Reuters July 5) — supply-chain *funded* signal | The supply chain is *pricing in* the v1.0 demand; v1.0 v32 619MB footprint is the v33 *only* way to be on the right side of this curve | Q3 W1 (1 day copy) |
+| plan-X20 (v33): Sakana RSI Lab as v1.0 "second-mover" RSI positioning | Sakana is sample-efficiency-first, closed-weights, Tokyo-based. Danlab is open-weights, on-device, India-based. *Different wedges — both ship before maximalist RSI.* | The v33 best RSI positioning is "we are not racing Sakana, we are the *edge* co-evolution layer" | Q3 W3 (1 day copy) |
+| plan-J (v25): ASPIRE skill library port | Port Anthropic Skills + skill libraries to OpenClaw skill format | Skill libraries are now the v33 *de facto* agent marketplace | Q1 2027 |
+| plan-X3 (v32): India IT services partnership | TCS, Wipro, Infosys reorienting to AI-agent-first workforce. v1.0 self-hosted agentic gateway is the v32 *Indian IT services displacement target* | Sharpened in v33 with Reuters India IT AI hiring + Indian sovereign-AI 3-bloc frame | Q1 2027 |
 
-**Theme: ship a credible v1 desktop prototype + start the HRM-Text fine-tuning pipeline.**
+### 24-month horizon (Q3 2027 → Q3 2028)
 
-### Engineering
+**Adjusted in v33.** v33 sharpens the 24-month bet: **co-evolution + multi-agent + chip sovereignty.** v32 had this as a softer "expansion" phase. v33 makes it a *named* phase.
 
-- **agentd (Rust).** Stand up the agent runtime that owns the planning loop, tool orchestration, and budget enforcement. OpenClaw sits underneath as transport. This is the single biggest architectural gap in the current stack. **v40 adds: agentd talks to HRM-Text-1B for reasoning, not Claude/GPT.**
-- **learnerd (Python).** SIA-H-style harness improvement loop. Nightly job: a local LFM2 model reads the day's logs, identifies failure modes, proposes harness changes to agentd, persists them with version control. The user reviews and approves. This is real self-improvement, scoped to the harness, in 6 months.
-- **memoryd v1 → v2.** Begin migration from flat vector store to Infini Memory topic-structured documents. Dual-mode for 1 release (v1 read-only, v2 takes new writes), then v2 only.
-- **Embeddings swap.** all-MiniLM-L6-v2 → LFM2.5-Embedding-350M. 384d → 1024d, native multilingual, Apache 2.0-equivalent license. **Sovereignty moat strengthens: no U.S.-controlled embedding model.**
-- **HRM-Text-1B fine-tuning pipeline.** Set up the training infrastructure (H100 or H200 access, 16 GPUs, 1.9 days per run). Fine-tune HRM-Text-1B on Danlab data: voice transcripts, memory schemas, salience decisions, tool-call traces. Target: HRM-Danlab-1B v1, integrated into agentd as the default reasoning model by end of month 6.
-- **Eval harness (dglabs-eval v1).** 50-100 test scenarios (conversation, tool-use, memory recall, proactivity, safety) that run nightly and produce a regression report. The eval is the scientific credibility layer.
-- **DanClaw proxy.** Wrap OpenClaw behind a hardened proxy that suppresses its crash propagation, mirrors state to memoryd, and exposes a wearable-grade control API. v38 carry-over.
-- **Smart frame selection in perceptiond.** Pre-filter with a tiny YOLO model (TinyissimoYOLO-class) and only call the VLM on frames that pass the salience test. Targets: 67% reduction in VLM calls.
-- **Perceptiond tile-based inference.** Switch to a BlueLM-2.5-3B style tile-based pipeline for high-res images.
-- **Rename the "RL feedback loop"** in danlab-multimodal. Stop calling it RL. Call it "in-context preference memory" or "contextual bandit harness" — accurate, defensible, signals we know the difference.
+| Plan | Description | v33 Sharpening | Target |
+|------|-------------|----------------|--------|
+| **plan-CO3 (NEW v33)**: Multi-Digital-Worker orchestration | Multiple Sico-style Digital Workers (memoryd + perceptiond + audiod + ttsd + 3rd-party) coordinated by OpenClaw Octopus Orchestrator | Sico survey "Agentic Evolution" validates the *Digital Worker* unit as the v33 *primary agent abstraction* | Q2 2028 |
+| **plan-CO4 (NEW v33)**: Co-evolution memory backend | Memoryd v2.0: storage/retrieval split (Memora pattern) + Ebbinghaus decay (MemPalace pattern) + context-graph (enterprise AI survey pattern) | Three independent 2026 validations: Memora (Microsoft), MemPalace (Cognify), context graph (Enterprise Times July 1 2026) | Q3 2028 |
+| plan-S4 (NEW v33): Chip-stack sovereignty cert | Public certification that v1.0 stack runs on Snapdragon AR1 / AR2 / MediaTek / Rockchip without NVIDIA lock-in | Apple A20 Pro WMCM (v32) + OnePlus N6 4GB (v32) + Samsung/SK Hynix $518B fab buildout (v33) = supply chain is *funded* | Q4 2027 |
+| plan-RS1 (v28): SIA-W+H honest RL | SIA-W+H fork as research-publishing bet (ICLR/NeurIPS 2028) | Felix Chau SIA concrete numbers + Sakana RSI Lab = v33 *most-credible* self-improvement research path | Q1 2028 |
+| plan-P5 (NEW v33): Sico co-evolution interoperability | OpenClaw agents interoperate with Sico Digital Workers via MCP — Danlab is the *co-evolution edge* | Microsoft's Sico is open-source (July 2026) and the v33 *natural partner* | Q2 2028 |
+| plan-E1 (v29): Export-uncapturable hardware reference design | Reference design for v1.0 hardware that cannot be retrofitted with a closed-source subsystem | The v33 *Sovereign* chip + hardware bet | Q3 2028 |
 
-### Product
+### v33 critical retractions / adjustments
 
-- **"What Dani learned this week" screen.** First-class UX surface for self-improvement. Shows the user what the agent noticed, what it changed, what it wants to change. The user approves, rejects, or modifies. This is the product surface for learnerd.
-- **Privacy dashboard.** Screen that shows exactly what is on-device, what (if anything) is in the cloud, and what has been deleted. This is the differentiator vs Meta + Apple.
-- **Onboarding flow for the memoryd.** First time a user puts on the glasses, set up the typed memory schema (working, episodic, semantic, procedural) with explicit defaults.
-- **Telegram bridge hardening.** Make the Telegram channel the user's window into learnerd's proposals. Every harness change appears as a Telegram message with a yes/no/edit reply.
+- **None.** v32 plans X11, X12, X13, X3-sharpen, P3, P4, S1, S2, S3 all hold. v33 *adds* plans, does not *retract*.
+- v33 5 new plans: CO1 (Sico-style DW shell), CO2 (Memora port), X14 (Hermes), X15 (RSI landscape), X16 (quantization), X17 (local.ai), X18 (Glasswing), X19 (Foxconn), X20 (Sakana) — total 9 new plan names; X15-X20 are 1-day copy + spec, CO1/CO2 are 1-2 week engineering.
+- v33 2 sharpened plans: plan-A (Memora port, priority bumped to Q3 W1-W2), plan-X3 (India IT services partnership, design phase Q1 2027).
+- v33 2 named phases: **co-evolution (6-12mo)** + **multi-agent + chip sovereignty (12-24mo)**.
 
-### Research
+### v33 18-step → 22-step marketing narrative (per v32 + v33 deltas)
 
-- **Validate HRM-Text fine-tuning on our domain.** Run the full training pipeline. Measure reasoning quality on our eval set. Measure inference latency on phone-class hardware (Snapdragon 8 Gen 3 or equivalent).
-- **Validate Infini Memory topic-document pattern on memoryd.** Implement a prototype, benchmark against the current flat vector store on the LoCoMo benchmark. Goal: better long-term memory with fewer context tokens.
-- **In-context contextual bandit prototype.** 100-line Python implementation that uses the episodic memory as a policy library. This is what we ship as the v1 "learning" loop while learnerd is being built.
-- **Voice cloning feasibility study.** Can we fine-tune KittenTTS Mini on 5 minutes of recorded speech in <1 hour on a phone? If yes, ship in v1. If no, ship cloud-fine-tune with explicit privacy disclosure.
+The v32 22-step narrative now extends to **22 steps** with the v33 *co-evolution* step as the closing:
 
-### Hiring (if budget allows)
+1. Anthropic Mythos 5 banned June 12 (export-control risk)
+2. Anthropic Fable 5 export-controlled for 18 days
+3. OpenAI -$20.9B audited operating loss
+4. Karp: "per-token pricing is completely wrong"
+5. Meta paywalls on-device Conversation Focus $20/mo
+6. Anthropic Sonnet 5 + self-hosted Claude Code gateway (validate the application-layer race)
+7. Jensen: memory-chip supply shortage "several years"
+8. Nvidia Kyber delayed to 2028 (frontier-delayed)
+9. SK Hynix $29B US IPO (supply-chain funded)
+10. Foxconn +40% YoY (supply-chain priced-in)
+11. Apple A20 Pro WMCM (on-device AI forced Apple to redesign)
+12. White House no-FDA-regulator
+13. Proton Lumo 2.0 127-240% gap-closed (privacy-first is now capable)
+14. Mistral $23.15B / Forge (EU sovereign-AI market-cap)
+15. India IT AI hiring outpaces overall IT
+16. OpenNebula + Waldur (EU infrastructure-mature)
+17. Jack Clark: 60% RSI by 2028 (outer-loop already in flight)
+18. Sakana RSI Lab + Recursive Superintelligence + Mirendil + Anthropic Institute
+19. Microsoft Frontier Co. $2.5B + Palantir $25B (enterprise implementation wedge)
+20. Gartner $234B SaaS-at-risk (agentic AI displaces SaaS)
+21. **Microsoft Sico + 300-paper Agentic Evolution survey (co-evolution is now the frame)**
+22. **Danlab ships the co-evolution layer before the frontier catches up**
 
-- **Rust systems engineer** for agentd.
-- **ML systems engineer** for HRM-Text fine-tuning pipeline + memoryd v2.
-- **Embedded ML engineer** for smart frame selection + NDP200 integration.
-
-### Budget
-
-- HRM-Text fine-tuning runs: 16 × H100 × 1.9 days ≈ $1,500 per run. Plan 5-10 runs in 6 months = $7,500-$15,000.
-- Brilliant Labs Halo ($349) + GAP9 dev kit (~$300) for wearable prototyping.
-- dglabs-eval compute: ~$2,000/month for nightly evals.
-
----
-
-## 12-month roadmap (Dec 2026 → Jun 2027)
-
-**Theme: ship a self-improving system that is demonstrably better than v1, on a wearable form factor.**
-
-### Engineering
-
-- **agentd v1 → v2.** Add proactive triggering, calendar awareness, location awareness. The "should I speak now?" model becomes learned (ProAct pattern), not rule-based.
-- **learnerd v1 → v2: SIA-H → SIA-W+H.** Add weight updates. Federated preference fine-tuning of HRM-Danlab-1B. Users opt in explicitly. We train a reward model on (output, user_correction) pairs, then DPO the base model. Push updates back via OTA. **v40 anchor: SIA-W+H numbers are real (LawBench +25.1pp over SOTA).** We can do this.
-- **memoryd v2 → v3.** Add MemVerse-style periodic distillation. Compress long-term memory to parametric recall. The "I remember everything you've ever said" feature becomes feasible at wearable scale.
-- **Wearable port (Dan Glasses v1.5 hardware).** Build the first wearable prototype. Reference design: OpenGlass (67.4 mW continuous, 200 mAh battery) + Brilliant Labs Halo form factor. Target: 18h battery on a single charge, <80g total weight.
-- **Cross-device memory sync.** User gets a new phone, or a new pair of glasses. Memory follows them. Encrypted, end-to-end, user-owned.
-- **Voice clone v1.** On-device fine-tuning of KittenTTS Mini. 5 minutes of voice, 1 hour of compute on the phone, lifetime of personal TTS.
-- **proactived.** Owns the "should I speak now?" decision. V1: rule-based. V2: learned. V3: self-improving.
-- **Smart frame selection on wearable hardware.** TinyissimoYOLO-class pre-filter on the always-on chip. VLM (HRM-Text-VL, see model analysis) only on salient frames.
-
-### Product
-
-- **Dani Skills marketplace.** Open the dani-skills registry to community contributions. The OpenClaw-moment for us.
-- **Dani Marketplace v0.** Users browse, install, share skills. Open format, signed registry, user owns their data.
-- **Privacy-preserving federation.** Opt-in to share improvement data with the Danlab community, with differential privacy guarantees. This is how we get the data volume for weight updates.
-
-### Research
-
-- **HRM-Danlab-3B.** Scale up. Train a 3B parameter reasoning model on Danlab data. Target: 70-80% of GPT-4 quality on our eval set, fully on-device.
-- **True RL on the harness.** Move from in-context bandit to a proper contextual bandit with credit assignment. Academic contribution worth publishing.
-- **Memory consolidation with neural networks.** Replace LLM-based fact extraction with a smaller, fine-tuned model.
-- **HRM-Text-VL exploration.** Multimodal extension of HRM-Text. Watch for Sapient's roadmap.
-
-### Budget
-
-- HRM-Danlab-3B training: 16 × H100 × ~7 days ≈ $5,000-$10,000 per run. Plan 3-5 runs = $15,000-$50,000.
-- Wearable dev kits: Brilliant Labs Halo ($349) + GAP9 ($300) + Qualcomm AR1 dev kit (~$2,000) = $2,650.
-- dglabs-eval: $2,000/month × 6 = $12,000.
+**v33 closes the narrative on co-evolution.** v1.0 marketing copy: "the AI revolution will not be televised — it'll be *co-evolved*."
 
 ---
 
-## 24-month roadmap (Jun 2027 → Jun 2028)
+## v33 Top 5 Recommendations for somdipto
 
-**Theme: ship the first truly self-improving personal AI, on custom hardware, that is open source.**
+1. **Q3 W1-W2: Memora storage/retrieval split port to memoryd v1.5 (plan-A sharpen, 2 weeks, 1 eng)** — Microsoft *also* independently arrived at the same architecture (July 2026). Two-week engineering spike, huge wedge benefit (retrieval is the v32 DynamicMem 93%-failure-cause).
+2. **Q3 W1: 5 new 1-day spec copy plans (X15, X16, X17, X18, X19) — total 5 days engineering-free** — adds the v33 Sakana/local.ai/Glasswing/Foxconn/quantization cites to v1.0 spec §13-§15.
+3. **Q4 W1: Hermes Agent openclaw plan-A drop-in (plan-X14, 1 week, 1 eng)** — Hermes is the v33 most-invested self-hosted agent framework. 1-week drop-in gives Danlab the *optionality* to switch if OpenClaw development stalls.
+4. **Q2 2027: Sico-style Digital Worker shell for OpenClaw (plan-CO1, 2-3 weeks, 1 eng)** — v33 closes the 24-month plan with a *named* co-evolution phase. This is the v33 most-strategic engineering bet.
+5. **Q3 W2: spec §15 "5-org RSI landscape" (plan-X15, 1 day copy)** — name the field (Sakana + RSI + Mirendil + Anthropic Institute + Andrew Ng) and position Danlab as the *audit-by-default, co-evolution* layer.
 
-### Engineering
+## v33 Open Questions for somdipto
 
-- **Dan Glasses v2 hardware.** Bigger battery (400-500 mAh), better display, more compute (NPU bump). Reference: Nanomind (0.375W continuous VLM, 18.8h on 2000 mAh) + OpenGlass (67.4 mW continuous, 11.5h on 200 mAh).
-- **On-device fine-tuning.** Run DPO/RLHF on the wearable. User trains their own model on their own data, on their own device. The privacy story taken to its logical conclusion.
-- **Dani v2 (the "brain").** Move from agent runtime to a true cognitive architecture. Episodic + semantic + procedural + working memory, with a planner that uses all four. CMA paper is the spec.
-- **Multi-agent Danlab.** Different agents for different tasks (calendar agent, learning agent, conversation agent, vision agent), coordinated by a meta-agent. Microsoft Scout / Perplexity Computer pattern.
-- **Self-improving memory.** Perplexity Brain-style. The memory system improves itself nightly, based on what the user engages with and what they ignore.
-
-### Product
-
-- **Dani as a platform.** Third-party developers build on top of Dani. Skills, agents, integrations. The "Android of personal AI."
-- **Dani as a service for other wearables.** License the platform to other hardware makers. The Android play.
-- **Dani for India.** Local language support, local cultural context, local regulatory compliance. India is the test market; the Global South is the beachhead.
-- **HRM-Danlab-Public.** Open-source the HRM-Text fine-tuned model. Let the world run our reasoning model. The moat is the integration, not the weights.
-
-### Research
-
-- **Publish the self-improvement framework.** Take what we learn from in-production self-improvement and publish it. This is how we hire, how we get academic credibility, and how we contribute back.
-- **Open-source agentd + learnerd.** The most novel pieces of our stack. The community will improve them faster than we can.
-- **Cross-lab collaboration.** Sakana RSI Lab, Hexo SIA, Sapient HRM, Perplexity Brain, Danlab. We are not in the AGI race alone. The community is the moat.
-- **HRM-Danlab-VL.** Vision-language variant of our reasoning model. Watch Sapient's HRM-VL roadmap.
-
----
-
-## What we will NOT do (the explicit non-goals)
-
-- **We will not try to beat Meta on hardware or scale.** They have 7M+ units and a $50B+ war chest. We win on privacy, on custom hardware, on open source, on India.
-- **We will not build a foundation model from scratch (yet).** We use HRM-Text-1B as the base, fine-tune on Danlab data. Our contribution is the fine-tuning recipe, the agent runtime, the memory system, the self-improvement loop — not the base model architecture. (If HRM-Text proves to be the wrong base by 2027, we revisit.)
-- **We will not rent Claude/GPT for the agent loop.** v1.5 ships on HRM-Danlab-1B. Cloud APIs are for eval + training only.
-- **We will not ship a chatbot.** We ship a learning system. The "what Dani learned this week" view is the product. The conversation is the interface.
-- **We will not compromise on privacy for capability.** If a feature requires cloud-by-default, it does not ship. Period.
-
----
-
-## v40 changes from v39
-
-1. **Model strategy:** v39 said "use LFM2-VL, BlueLM, and other open models." v40 says **"own the reasoning stack with HRM-Text-1B fine-tuned on Danlab data."** The Sapient result changes the economics.
-2. **Self-improvement:** v39 said "ship Option B (in-context contextual bandit) as v1, plan Option A (DPO) as v2." v40 says **"ship SIA-H (harness-only) as v1, SIA-W+H (harness + weights) as v2."** The verified SIA numbers justify the v2 weight-update path.
-3. **Memory:** v39 said "memoryd v2 with typed memory + bi-temporal edges." v40 says **"memoryd v2 with Infini Memory topic-structured documents, v3 with MemVerse periodic distillation."** The 2026 memory research is the new spec.
-4. **Wearable window:** v39 said "the window is 12-18 months." v40 tightens this with Meta Ray-Ban Display at $799 and Gen 3 leaks confirming multi-hour Live AI. **The window is 12 months, not 18.**
-5. **Embeddings:** v39 didn't mention embeddings specifically. v40 adds **LFM2.5-Embedding-350M swap** as a 6-month priority (sovereignty + multilingual + better retrieval).
-6. **Dani vs. Dan Glasses priority:** v39 asked. v40 recommends **Dan Glasses is the lead product, Dani is the platform.** Ship the wearable first; the platform follows.
-
----
-
-## Open questions for somdipto
-
-1. **Hardware roadmap.** Dan Glasses hardware on a 6-month or 12-month cadence? This determines the model upgrade path.
-2. **Cloud policy.** Strictly local-first, or opt-in cloud features (voice clone training, federated improvement)? The answer changes the architecture.
-3. **India focus.** Building for India first then expanding, or global with India as flagship? Changes language and cultural priorities.
-4. **Academic engagement.** Want to publish papers? Sapient + Hexo + Sakana are all in the open-source reasoning + RSI space. Co-authoring or citing would be valuable.
-5. **Hiring budget.** The 6-month plan needs 2-3 senior engineers + HRM fine-tuning compute. Is that budget available?
-6. **HRM-Text partnership.** Should we reach out to Sapient for a joint paper or fine-tuning partnership? They are well-positioned for collaboration.
-7. **Dani vs. Dan Glasses priority.** Dan Glasses lead, Dani as platform? Or equal?
-8. **Cost of "owning the reasoning stack."** HRM-Text-1B fine-tuning is $1,500/run. 3B is $5,000-$10,000/run. Are we ready to spend $50,000-$100,000/year on training compute?
-
----
-
-## Recommendation summary (TL;DR)
-
-- **6 months:** agentd (Rust) + learnerd (SIA-H harness loop) + memoryd v2 (Infini Memory) + HRM-Danlab-1B v1 + LFM2.5-Embedding swap + privacy dashboard. **Ship a credible desktop v1 with our own reasoning model.**
-- **12 months:** SIA-W+H weight loop on HRM-Danlab-1B → 3B + memoryd v3 (MemVerse periodic distillation) + wearable v1.5 (Brilliant Labs Halo + GAP9). **Ship a self-improving wearable.**
-- **24 months:** on-device fine-tuning + Dani as a platform + India beachhead. **Ship the first truly private, self-improving, ambient AI.**
-- **Never:** scale-the-frontier, foundation model from scratch (until we have to), cloud-rented agent loop, chatbot, privacy compromise.
-
-This is the path. Ship it. 👾
+1. Memora port priority: confirm Q3 W1-W2 start (recommend: yes)
+2. Hermes Agent plan-A drop-in priority: confirm Q4 W1 (recommend: yes)
+3. Sico co-evolution shell: confirm Q2 2027 + 1 eng dedicated (recommend: yes, this is the v33 24-month bet)
+4. v1.0 spec §15 "5-org RSI landscape" addition (recommend: yes, 1 day copy)
+5. v1.0 spec §13 Glasswing 18-day-ban cite (recommend: yes, 1 day copy)
+6. v1.0 spec §14 Foxconn +40% YoY cite (recommend: yes, 1 day copy)
+7. v33 "co-evolution" as the v1.0 marketing closing frame (recommend: yes, replace "audit-by-default" with "co-evolution + audit-by-default")
+8. Hermes Agent vs OpenClaw plan-A/B (recommend: OpenClaw primary, Hermes as plan-B switch option)
+9. plan-CO3 multi-Digital-Worker orchestration scope (recommend: scope to 2 workers first, expand Q3 2028)
+10. plan-P5 Sico interoperability timing (recommend: Q2 2028, post-v1.5)

@@ -231,7 +231,25 @@
 .vision-item-time { color: #a1a1aa; }
 .vision-item-id { color: #52525b; }
 
+.vision-item-body {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+}
+
+.vision-item-thumb {
+  width: 96px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: #18181b;
+  border: 1px solid #1f1f23;
+  flex-shrink: 0;
+}
+
 .vision-item-text {
+  flex: 1;
+  min-width: 0;
   font-size: 0.9rem;
   color: #e4e4e7;
   line-height: 1.4;

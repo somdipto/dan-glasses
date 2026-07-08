@@ -24,3 +24,13 @@ publish:
 push_to_talk:
   enabled: false
   hotkey: space
+
+# v1.3: structured-metric push sink (Loki).
+# `enabled: null` defers to the AUDIOD_METRICS env var; explicit
+# true/false overrides regardless of env. interval_s=10 keeps p50/p95
+# graphs lively without flooding the push endpoint.
+metrics:
+  enabled: null
+  loki_url: http://localhost:3100/loki/api/v1/push
+  interval_s: 10
+  timeout_s: 2

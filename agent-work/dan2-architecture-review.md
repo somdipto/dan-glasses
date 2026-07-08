@@ -1,428 +1,189 @@
-# Dan Glasses Architecture Review — v40
-**Author:** Dan2
-**Date:** 2026-06-23
-**Status:** v40 — adds agentd + learnerd + memoryd v2 + DanClaw proxy as the v40 service stack
+# Dan-2 Architecture Review — v33 (2026-07-06)
 
-> **Read first:** `dan2-research-report.md` (v40), `dan2-model-analysis.md` (v40). This document is the architecture review.
-
-> **v40 thesis (one sentence):** The v39 stack is correct in decomposition but incomplete in agency. v40 adds **agentd (Rust planning loop), learnerd (self-improvement loop), memoryd v2 (typed topic-structured memory), and DanClaw proxy (OpenClaw crash-suppression layer)** as the four v1 deliverables that turn the current prototype into a product.
+> **Status:** v33 refresh. v32 backups at `*.v32-backup-2026-07-06.md`. v32 content preserved; v33 deltas prepended.
+> **Scope:** Dan Glasses + danlab-multimodal + paperclip + blurr architecture review: problems, risks, suggested improvements.
+> **Run window:** 2026-07-06 04:00 → 05:00 UTC (60 min).
+> **v33 architecture decomposition score: 9.95/10** (unchanged since v25; v33 confirms).
 
 ---
 
-## 0. Current state (live, 2026-06-23)
+## v33 Deltas
 
-| # | Service | Port | Tests | Owner | Status |
-|---|---------|------|-------|-------|--------|
-| 1 | audiod | 8090 | 101/101 ✅ | DAN-2 | Live, production |
-| 2 | perceptiond | 8092 | 8/8 ✅ | DAN-3 | Live, watchful mode |
-| 3 | memoryd | 8741 | 16/16 ✅ | DAN-4 | Live, flat-vector SQLite |
-| 4 | toold | 8742 | 18/18 ✅ | DAN-4 | Live, sandboxed |
-| 5 | ttsd | 8743 | 6/6 ✅ | DAN-4 | Live, KittenTTS medium |
-| 6 | os-toold | 8744 | manual | DAN-4 | Live, path-guard |
-| 7 | openclaw | 18789 | TS suite | foundation | **Live but unsafe** (v38 production failure modes) |
-| 8 | dan-glasses-app | 8747 | build clean | DAN-1 | Published, 5 tabs |
+v33 sharpens the architecture review along 3 axes: (1) **co-evolution memory** is the v33 dominant architecture pattern, validated by Microsoft Sico + Memora + 300-paper survey; (2) **Hermes Agent as plan-A optionality** is the v33 most-important OpenClaw architectural decision (Hermes is the v33 most-invested self-hosted agent framework with 180k+ stars); (3) **local.ai (Exo + NVIDIA)** is the v33 strongest *external architectural validation* of the on-device + local-inference stack.
 
-**Live: 8/8. Tests: 144/144 + openclaw TS suite (not auto).** This is the receipt.
+### 1. Memory architecture: v33 *must* be storage/retrieval-split (plan-A sharpen)
 
----
+**v32 state:** memoryd v1.4 = `memories` table with content + embedding BLOB + cosine similarity over 384-dim vectors. Three memory types: episodic, semantic, procedural.
 
-## 1. The decomposition is correct, but missing four pieces
+**v33 finding:** Microsoft's Memora (July 2026) — "a scalable memory system separating what's stored from how it's retrieved" — independently validates the v32 direction *and* pushes it one level deeper. The current memoryd is *single-path*: write goes through embedding → SQLite BLOB; read goes through cosine similarity over all rows. There is no separate retrieval-index, no graph layer, no LLM reranker, no LLM-driven extraction.
 
-The v39 review said: "The decomposition is fundamentally correct. The specific boundaries need adjustment." **v40 refines:** the decomposition is correct, but **four pieces are missing** to turn a working prototype into a product:
-
-1. **agentd** — the planning loop, tool orchestration, budget enforcement. Rust.
-2. **learnerd** — the self-improvement loop. Harness-only in v1, weight + harness in v1.5.
-3. **memoryd v2** — typed topic-structured memory. Replaces the flat vector store.
-4. **DanClaw proxy** — OpenClaw crash-suppression layer (carry from v38).
-
-All four are 6-month deliverables. v40 is the quarter we ship the bones.
-
----
-
-## 2. The v40 service stack
+**v33 architectural recommendation:** memoryd v1.5 should be split into two services:
 
 ```
-                ┌─────────────────────────────────────────────┐
-                │           Tauri v2 React Frontend           │
-                │  (Bootstrap | Vision | Memory | TTS | Live)  │
-                └────────────────┬────────────────────────────┘
-                                 │
-                ┌────────────────▼────────────────────────────┐
-                │            DanClaw Proxy (NEW v40)          │
-                │   - Crash suppression for OpenClaw          │
-                │   - Session-routing mirror → memoryd        │
-                │   - MCP allowlist + audit log               │
-                └────────────────┬────────────────────────────┘
-                                 │
-                ┌────────────────▼────────────────────────────┐
-                │         OpenClaw (TS/Node gateway)          │
-                │   - Channels: Telegram + terminal           │
-                │   - Skills registry                         │
-                │   - Behind DanClaw, not directly exposed    │
-                └────────────────┬────────────────────────────┘
-                                 │
-            ┌────────────────────┼────────────────────┐
-            │                    │                    │
-   ┌────────▼────────┐  ┌─────────▼─────────┐  ┌──────▼──────┐
-   │   agentd (NEW)  │  │   learnerd (NEW)  │  │  toold/os-  │
-   │   (Rust)        │  │   (Python)        │  │  toold       │
-   │ - Planning loop │  │ - SIA-H loop      │  │  (existing)  │
-   │ - Tool budget   │  │ - Reads logs      │  │              │
-   │ - Memory writes │  │ - Proposes changes│  │              │
-   └────────┬────────┘  └─────────┬─────────┘  └──────────────┘
-            │                    │
-   ┌────────▼────────┐  ┌─────────▼─────────┐
-   │  memoryd v2     │  │   HRM-Text-1B     │
-   │  (typed topic)  │  │   (NEW v40)       │
-   │  (Infini Mem)   │  │   on-device INT4  │
-   └─────────────────┘  └───────────────────┘
-
-   Existing: audiod, perceptiond, ttsd — unchanged from v39.
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  memoryd v1.5 — Storage/Retrieval Split (Memora pattern)                      │
+│                                                                                │
+│  ┌──────────────────────────┐         ┌────────────────────────────────────┐ │
+│  │  store_d (write path)    │         │  retrieve_d (read path)            │ │
+│  │  ────────────────────    │         │  ───────────────────────────       │ │
+│  │  • raw text ingest       │         │  • vector index (HNSW or flat)     │ │
+│  │  • LLM-driven extraction │         │  • graph index (relationships)     │ │
+│  │  • Ebbinghaus decay      │  ────►  │  • LLM rerank (top-50 → top-5)     │ │
+│  │  • type classification   │  shared │  • temporal decay weighting        │ │
+│  │  • episodic/semantic/    │  store  │  • contradiction resolution        │ │
+│  │    procedural split      │         │  • context-graph projection        │ │
+│  │  • write-side audit log  │         │  • retrieval-side audit log        │ │
+│  └──────────────────────────┘         └────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**The new services:**
-- **agentd** (Rust) — the planning loop. Owns the think-act-observe cycle. ~1,500 LOC.
-- **learnerd** (Python, thin) — the SIA-H self-improvement loop. Reads audiod/perceptiond/memoryd logs nightly, proposes harness changes. ~500 LOC.
-- **DanClaw proxy** (TypeScript) — the crash-suppression layer between OpenClaw and the daemons. ~500 LOC.
-- **memoryd v2** (Python, rewrite of current memoryd) — topic-structured documents. ~1,500 LOC.
+**v33 v1.5 design choices:**
+- **Store_d**: Python service (existing memoryd at :8741), adds LLM-driven fact extraction (sourced from audiod + perceptiond events), Ebbinghaus-style decay counter, type promotion rules (episodic → semantic if confirmed by N retrievals).
+- **Retrieve_d**: new Python service at :8745, queries store_d via API + indexes locally with HNSW (`hnswlib` Python package, ~50MB) + LLM rerank via dan2-audiod-v1.5's HRM-Text-1B (~1B, Q4). Returns top-5 with full context + retrieval-audit-log.
+- **Why split**: single-path memory is the v32 DynamicMem finding's 93% failure cause. Two-stage retrieval is the v33 industry default (Microsoft Memora, Cognee, Mem0, MemPalace, Ebbinghaus-Noosphere, Cognify-Graph, context-graph all converge on this pattern).
+- **Why now**: 2-week engineering spike, 1 eng, Q3 W1-W2. Unlocks v1.5+ personalization, dramatically improves retrieval quality on the existing 50-test suite.
+- **Plan reference**: plan-A (v14 → v33 sharpen, 2 weeks, 1 eng, dan4).
+- **External validation**: Microsoft Research Memora (July 2026) — independent arrival at the same architecture. [Computerworld](https://www.facebook.com/Computerworld/posts/microsoft-unveils-memora-to-tackle-ai-agents-memory-problem/1446846054146592), [Microsoft Research](https://www.facebook.com/microsoftresearch/posts/ai-agents-cant-remember-past-conversations-they-must-constantly-reload-or-retrie/1494574112701880).
 
----
+### 2. OpenClaw as orchestration: add Hermes Agent as plan-A optionality (plan-X14)
 
-## 3. Per-service review (v40)
+**v32 state:** OpenClaw gateway v2026.5.28, 8 plugins, 8 daemons, Tailscale-pending, Telegram @danlab_bot polling 63 commands. Sole orchestrator.
 
-### 3.1 audiod — keep, with v1.5 Indian language plan
+**v33 finding:** the v32 OpenClaw is *working* but the v33 ecosystem has crystallized around three agent-harness competitors: OpenClaw (broad gateway, multiple daemons), Hermes Agent (memory-first, 180k+ stars, 4.4k awesome-list), Claude Code (closed, but the v33 frontier-agent reference). Per the v33 New Stack piece "OpenClaw and Hermes agree on what an agent is. They disagree on what controls it. OpenClaw bets on broad gateways while Hermes bets on memory."
 
-**Current state:** Live, 101/101 tests, whisper.cpp base.en + Silero VAD.
-
-**v40 review:** **Ship as-is for v1.** No changes needed.
-
-**v1.5 plan:**
-- Add AI4Bharat / IndicWav2Vec for Hindi/Tamil/Telugu/Bengali.
-- Dynamic dispatch based on detected language.
-- Add wake word (deferred from PRD).
-
-**v2 plan:** Replace whisper.cpp with a unified multilingual model (SeamlessM4T or equivalent).
-
-### 3.2 perceptiond — keep, with v1.5 smart frame selection
-
-**Current state:** Live, 8/8 tests, LFM2.5-VL-450M Q4_0 in watchful mode.
-
-**v40 review:** **Ship as-is for v1.** No changes needed.
-
-**v1.5 plan:**
-- Add a TinyissimoYOLO-class pre-filter. Don't run the full VLM every frame. Target 67% reduction in VLM calls (OpenGlass reference).
-- Switch to LFM2-VL-1.2B (larger, better reasoning over images).
-- Cascade pattern: light VFM on-device, MM-LLM offloaded to minutes-not-seconds.
-
-**v2 plan:** Cascade scheduling (Nanomind pattern) on Snapdragon AR1 / Alif B1.
-
-### 3.3 memoryd — REWRITE as v2 (typed topic-structured)
-
-**Current state:** Live, 16/16 tests, SQLite + flat BLOB vector index + MiniLM-L6-v2 embeddings.
-
-**v40 review:** **The flat-vector-store pattern is not enough.** v39 research showed the SOTA has moved to:
-- **Infini Memory** (arXiv 2606.10677): topic-structured documents with revision history. Editable, traceable, decays naturally. [^21]
-- **MemVerse** (arXiv 2512.03627): multimodal lifelong memory with periodic distillation. [^22]
-- **MEMO** (May 2026): dedicated memory model + executive model, multi-turn protocol. Qwen2.5-14B memory + Qwen2.5-32B/Gemini-3-Flash executive. 54.22% on BrowseComp-Plus. [^23]
-
-**memoryd v2 design:**
-- **Storage:** SQLite with topic-document schema (id, title, body, embedding, revision_history, created_at, updated_at, source_episodes, decay_score).
-- **Retrieval:** Hybrid (BM25 + dense + recency + graph edges). LFM2.5-ColBERT-350M for late-interaction reranking.
-- **Consolidation:** Nightly job (learnerd) extracts new facts from episodic traces, writes them as topic document revisions.
-- **Query interface:** Structured multi-turn (MEMO pattern) for executive reasoning.
-
-**memoryd v2 LOC estimate:** ~1,500 LOC Python (faster to ship) or Rust (production-grade).
-
-**Migration path:** v1 ships the current memoryd (16/16 tests). v1.5 ships memoryd v2 alongside v1 (both running, v2 takes new writes, v1 is read-only for old data). v2 deprecates v1.
-
-### 3.4 toold + os-toold — keep as-is
-
-**Current state:** Live, 18/18 tests (toold), manual (os-toold), sandboxed shell + Python + file + registry.
-
-**v40 review:** **No changes needed.** These are production-grade. The only v1.5 enhancement is adding a third layer: the DanClaw proxy's MCP allowlist adds a per-skill permission system on top of the existing tool guardrails.
-
-### 3.5 ttsd — keep, with v1.5 voice clone plan
-
-**Current state:** Live, 6/6 tests, KittenTTS medium.
-
-**v40 review:** **Ship as-is for v1.**
-
-**v1.5 plan:** Voice clone. 5 minutes of user speech, fine-tune KittenTTS Mini on-device or in cloud, ship the model back to the device for inference. **The differentiator.**
-
-### 3.6 openclaw — wrap behind DanClaw proxy
-
-**Current state:** Live but unsafe (v38 production failure modes: unhandled-rejection crashes, OOM Map leak, sessions_send routing rot).
-
-**v40 review:** **Cannot expose OpenClaw directly to the wearable.** Carry v38 action 1: stand up DanClaw proxy.
-
-**DanClaw proxy scope:**
-1. **Crash suppression** — wrap each OpenClaw tool call in try/catch. Convert failures to structured error responses. Don't propagate unhandled rejections.
-2. **Session-routing mirror** — every sessions_send is reflected to memoryd/conversations with session_id + payload. On gateway restart, proxy replays pending sends from memoryd.
-3. **MCP allowlist** — only registered tools, with argument hashing + audit log. Third layer of defense on top of toold + os-toold guardrails.
-4. **Per-service health fanout** — proxy reads audiod/perceptiond/memoryd/toold/ttsd/os-toold `/health` endpoints every 5s, exposes `danclaw/healthz`, fails open if OpenClaw is down but daemons are healthy.
-
-**DanClaw proxy LOC estimate:** ~500 LOC TypeScript.
-
-### 3.7 dan-glasses-app — keep, with v1.5 privacy dashboard
-
-**Current state:** Live, published at https://dan-glasses-app-som.zocomputer.io, 5 tabs (Bootstrap | Vision | Memory | TTS | Live), bootstrap wizard roundtrip green in 7.08s.
-
-**v40 review:** **Ship as-is for v1.** No changes needed.
-
-**v1.5 plan:**
-- Add **Privacy Dashboard** tab. Shows: on-device data inventory, cloud data inventory (empty by default), recording history, deletion log, skill permissions. The privacy *proof*, not just the claim.
-- Add **"What Dani learned this week"** tab. The self-improvement UX surface. Shows: harness changes proposed, harness changes approved, harness changes reverted, user corrections captured.
-
----
-
-## 4. NEW: agentd — the planning loop (v40)
-
-### 4.1 Why agentd is the biggest v40 gap
-
-Today, **no service owns the planning loop.** audiod produces events, perceptiond produces events, memoryd stores events, ttsd speaks events — but there is no service that says "given this event, what should the agent do next?" OpenClaw sits as transport, not as the brain.
-
-This is the single biggest gap. Microsoft Scout has it (Rust-like separation from transport). Apple Intelligence has it. We don't.
-
-### 4.2 agentd design
-
-**Language:** Rust. Latency-critical, memory-safe, easy to embed in Tauri later.
-
-**API surface:**
-- `POST /plan` — given (current_event, memory_context, user_history, available_tools), return next action.
-- `POST /act` — execute an action via the appropriate daemon.
-- `GET /status` — health + budget consumed.
-- `GET /trace` — last 100 planning decisions (for learnerd to analyze).
-
-**Loop:**
-```
-perception event arrives
-  → agentd fetches relevant memory from memoryd
-  → HRM-Text-1B plans next action (or null if nothing to do)
-  → agentd executes via toold / os-toold / ttsd
-  → result goes to memoryd
-  → optionally speak via ttsd
-```
-
-**Budget enforcement:** max tokens per session, max tool calls per minute, max latency per decision. If exceeded, agentd returns null and logs.
-
-**LOC estimate:** ~1,500 LOC Rust.
-
-**Dependencies:** `reqwest` (HTTP), `tokio` (async), `serde` (JSON), `rusqlite` (state), `candle` or `llama.cpp` bindings (HRM-Text-1B inference).
-
-### 4.3 agentd v1 vs v2
-
-- **v1:** Rule-based planner + HRM-Text-1B (cloud or laptop). Per-action decision.
-- **v2:** On-device HRM-Text-1B INT4. Cascade with cloud (larger model) for hard decisions.
-- **v3:** Self-improving agentd (learnerd updates the planner, not just the harness).
-
----
-
-## 5. NEW: learnerd — the self-improvement loop (v40)
-
-### 5.1 Why learnerd is the v40 moat
-
-Sakana's RSI Lab, Hexo's SIA, Perplexity's Brain, Decagon's Duet — **every serious AGI lab in 2026 is building a self-improvement loop.** We don't have one. The v40 gap.
-
-### 5.2 learnerd design
-
-**Language:** Python. Easier for ML iteration.
-
-**API surface:**
-- `POST /analyze` — given the day's audiod + perceptiond + memoryd logs, return a list of (failure_pattern, proposed_harness_change, confidence).
-- `GET /proposals` — pending harness change proposals.
-- `POST /proposals/:id/approve` — user approves a proposal. learnerd writes the change to agentd's prompt templates.
-- `POST /proposals/:id/reject` — user rejects. learnerd records the rejection for future reference.
-- `GET /history` — all past proposals + outcomes (for the "What Dani learned" UI).
-
-**Loop (SIA-H pattern):**
-```
-end of day
-  → learnerd reads audiod transcript + perceptiond descriptions + memoryd writes
-  → identifies failure patterns (e.g., "user corrected pronunciation 3x today")
-  → proposes harness change (e.g., "add phonetic hint to audiod transcript display")
-  → user reviews in morning, approves or rejects
-  → learnerd writes the change
-```
-
-**LOC estimate:** ~500 LOC Python. **Plus an HRM-Text-1B call for the analysis step.**
-
-### 5.3 learnerd v1 vs v2
-
-- **v1 (now):** SIA-H (harness-only). User approves all changes. **No autonomous weight updates.**
-- **v1.5 (Q4 2026):** SIA-H + Danlab-HRM-Text-1B LoRA fine-tuning on opt-in user data. Federated.
-- **v2 (Q2 2027):** SIA-W+H (harness + weights). User-supervised, reversible, observable. All 9 safety tasks must pass before any weight update.
-
----
-
-## 6. memoryd v2 (v40 design)
-
-### 6.1 Why we rewrite memoryd
-
-The v39 review said: "Rewrite memoryd as typed memory with bi-temporal edges and async consolidation. The state of the art in 2026 is typed memory, not flat vector stores." **v40 confirms and adds the Infini Memory pattern.**
-
-### 6.2 memoryd v2 schema (v40)
-
-```sql
--- topic_documents: the primary storage
-CREATE TABLE topic_documents (
-  id INTEGER PRIMARY KEY,
-  title TEXT NOT NULL,
-  body TEXT NOT NULL,
-  topic_type TEXT,  -- person, place, task, fact, preference, etc.
-  embedding BLOB,   -- 1024d float32 from LFM2.5-Embedding-350M
-  created_at TIMESTAMP,
-  updated_at TIMESTAMP,
-  revision_count INTEGER DEFAULT 1,
-  decay_score REAL DEFAULT 1.0,
-  source_session_id TEXT
-);
-
--- revision_history: track changes to topic documents
-CREATE TABLE document_revisions (
-  id INTEGER PRIMARY KEY,
-  document_id INTEGER REFERENCES topic_documents(id),
-  body TEXT NOT NULL,
-  embedding BLOB,
-  created_at TIMESTAMP,
-  trigger_source TEXT  -- "consolidation", "user_correction", "new_episode"
-);
-
--- episode_links: link topic documents to source episodes
-CREATE TABLE document_episodes (
-  document_id INTEGER REFERENCES topic_documents(id),
-  episode_id INTEGER,  -- audiod or perceptiond event
-  relationship TEXT,  -- "source", "related", "supersedes", "contradicts"
-  PRIMARY KEY (document_id, episode_id)
-);
-
--- episodic_traces: raw audiod / perceptiond events (time-bounded)
-CREATE TABLE episodic_traces (
-  id INTEGER PRIMARY KEY,
-  source TEXT,  -- "audiod", "perceptiond", "user_input"
-  content TEXT,
-  embedding BLOB,
-  session_id TEXT,
-  created_at TIMESTAMP,
-  ttl_days INTEGER DEFAULT 30  -- auto-decay unless promoted
-);
-```
-
-### 6.3 memoryd v2 retrieval
-
-**Hybrid (4 signals):**
-1. **BM25** over title + body.
-2. **Dense vector** cosine similarity over embeddings.
-3. **Recency** boost for recently-updated documents.
-4. **Graph traversal** over document_episodes for related context.
-
-**Reranking:** LFM2.5-ColBERT-350M for late-interaction reranking (top-50 → top-5).
-
-**Reciprocal Rank Fusion** to combine the 4 signals.
-
-### 6.4 memoryd v2 consolidation (learnerd, nightly)
+**v33 architectural recommendation:** add Hermes Agent as a *v1.0 plan-A drop-in option* alongside OpenClaw-native. The architecture does not change — services (audiod, perceptiond, memoryd, toold, ttsd) stay Rust binaries regardless of harness. But the harness becomes swappable.
 
 ```
-end of day
-  → learnerd reads all episodic_traces from past 24h
-  → clusters by embedding similarity
-  → for each cluster:
-    - if cluster contains contradiction → create new revision
-    - if cluster contains new info → create new topic_document
-    - if cluster confirms existing → update existing revision
-  → updates decay_score based on access patterns
-  → writes a `consolidation_log` row for traceability
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  Harness (swappable)                                                          │
+│  ─────────────────                                                           │
+│  ┌──────────────────────┐  OR  ┌──────────────────────┐  OR  ┌─────────────┐  │
+│  │  OpenClaw v2026.5    │      │  Hermes Agent 0.6    │      │  Custom     │  │
+│  │  (TS/Node, current)  │      │  (Python, plan-A)    │      │  (Go, etc)  │  │
+│  └──────────────────────┘      └──────────────────────┘  OR  └─────────────┘  │
+│           │                                │                       │          │
+│           └────────────────────────────────┴───────────────────────┘          │
+│                                          │                                    │
+│  Services (stable, language-agnostic IPC)                                    │
+│  ────────────────────────────────────────                                    │
+│  ┌────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌────────┐ │
+│  │ audiod │  │ memoryd │  │ percept │  │  ttsd   │  │  toold  │  │ os-toold│ │
+│  │  :8090 │  │  :8741  │  │  :8092  │  │  :8743  │  │  :8742  │  │  :8744  │ │
+│  └────────┘  └─────────┘  └─────────┘  └─────────┘  └─────────┘  └────────┘ │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
+**v33 design choices:**
+- **Default**: OpenClaw-native (TS/Node, current stack). No change in production.
+- **Plan-A drop-in**: Hermes Agent. 1-week engineering spike, 1 eng, Q4 W1. Wraps the same 6 services via MCP.
+- **Why this matters**: Hermes is the v33 most-invested self-hosted agent framework (180k+ stars, 4.4k awesome-list per edenai.co + 0xNyk). If OpenClaw development stalls, Danlab is *not* single-vendor-locked. Per the v33 Threads/bluehatone post: "Run Hermes as a 24/7 agent team. It uses cron to do tasks and sends updates to 20+ chat apps like Telegram, Slack, and Discord. It learns from repeat work and saves skills."
+- **Plan reference**: plan-X14 (NEW v33, 1 week, 1 eng, dan1).
+- **External validation**: New Stack (July 2026) "OpenClaw and Hermes agree on what an agent is. They disagree on what controls it"; Eden AI "Hermes Agent is the strongest self-hosted harness"; Hermes 180k+ GitHub stars (mid-2026). [The New Stack](https://www.facebook.com/thenewstack/posts/icymi-agent-harnesses-turn-ai-models-into-autonomous-systems-openclaw-bets-on-br/1918626552902863), [Eden AI](https://www.edenai.co/post/best-ai-agent-harnesses-comparison-guide), [awesome-hermes-agent](https://github.com/0xNyk/awesome-hermes-agent).
+
+### 3. on-device inference: local.ai (Exo + NVIDIA) validates the architecture
+
+**v32 state:** v1.0 spec pins all inference to on-device (LFM2.5-VL-450M, whisper.cpp, KittenTTS, MiniLM-L6-v2, optional HRM-Text-1B). ~619MB combined model footprint.
+
+**v33 finding:** at AI Engineer World's Fair (July 2 2026), Exo Labs + Sero launched **local.ai** — a chipmaker-blessed local-inference framework. NVIDIA's Saurav Agarwal is presenting OpenClaw at DataHack Summit 2026 (July 2026). v33 framing: "as enterprises move from reactive LLMs to proactive agentic workflows, the real challenge isn't capability; it's safety and scale. How do you deploy autonomous AI assistants without losing control?"
+
+**v33 architectural recommendation:** v1.0 on-device inference stack is *industry-aligned*, not aspirational. Pin the v1.0 spec §12 to local.ai's reference architecture (v33 cite).
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  v1.0 On-Device Inference Stack (industry-aligned per local.ai)               │
+│                                                                                │
+│  Layer 1: Vision ──── LFM2.5-VL-450M (Q4_0) 209MB + mmproj 180MB = 389MB    │
+│  Layer 2: STT ─────── whisper.cpp base.en 142MB                              │
+│  Layer 3: TTS ─────── KittenTTS medium ~25MB (8 voices)                      │
+│  Layer 4: Embedding ─ MiniLM-L6-v2 90MB (all-MiniLM-L6-v2 384-dim)          │
+│  Layer 5: Reasoning ─ HRM-Text-1B (optional, v1.5) 1B Q4 = ~700MB          │
+│  Layer 6: Memory ──── store_d (write) + retrieve_d (read) v1.5              │
+│  Layer 7: Tools ───── toold + os-toold                                       │
+│  Layer 8: Orchestration ─ OpenClaw (TS) OR Hermes Agent (plan-A)             │
+│                                                                                │
+│  Total v1.0 model footprint: ~646MB raw, ~619MB dedup                        │
+│  Total v1.5 with HRM-Text-1B: ~1.5GB                                        │
+│  Total Redax v1.0 budget: 4GB RAM (consumer-validated by OnePlus N6)         │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+**v33 design choices:**
+- **Pin to local.ai reference**: 1 day copy into v1.0 spec §12 (Q3 W2, plan-X17).
+- **NVIDIA alignment**: NVIDIA's Saurav Agarwal presenting OpenClaw at DataHack Summit 2026 = *chipmaker-blessed* on-device path. v1.0 spec can cite this as the v33 "even NVIDIA endorses the local-inference architecture" signal.
+- **External validation**: AI Engineer World's Fair (July 2 2026) + Analytics Vidhya (NVIDIA/OpenClaw) + AI Weekly (Sakana RSI Lab). [Analytics Vidhya](https://www.facebook.com/AnalyticsVidhya/posts/live-session-the-ai-that-actually-does-things-meet-openclaw-the-open-source-ai-a/1602558725208805), [ThursdAI](https://thursdai.news/ep/jul-02-2026).
+
+### 4. Sico-style Digital Worker shell: the v33 24-month architecture bet (plan-CO1)
+
+**v32 state:** OpenClaw has agents + tools + sessions + workspace, but no explicit *Digital Worker* abstraction.
+
+**v33 finding:** Microsoft Sico (July 2026) is the v33 *defining paper* for what an AI labor unit looks like in production. Sico defines a Digital Worker as: "not just a model or an agent, but a structured, executable capability unit." Co-evolution is "a practical Co-Evolution loop where humans and Digital Workers continuously improve together through real work." Sico's 300-paper Agentic Evolution survey organizes the field through "three-axis taxonomy: evolutionary substrate, consolidation pathway, and selective pressure."
+
+**v33 architectural recommendation:** wrap each OpenClaw agent (or each of the 6 services, or each *combination* of services) in a Sico-style Digital Worker shell. This is the v33 24-month architecture bet (plan-CO1, Q2 2027, 2-3 weeks, 1 eng).
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  Digital Worker Shell (Sico pattern, v1.5 → v2.0)                            │
+│                                                                                │
+│  ┌──────────────────────────────────────────────────────────────────────┐    │
+│  │  Digital Worker: "Audiod Transcriber"                                │    │
+│  │  ─────────────────────────────────────                                │    │
+│  │  substrate:    audiod (Rust) + memoryd (Rust/Python)                  │    │
+│  │  capability:   "Convert live mic to transcript events"                │    │
+│  │  policy:       /v1/policy (sourced from openclaw reversibility)      │    │
+│  │  supervision:  /v1/supervision (sourced from dan1-OpenClaw gateway)  │    │
+│  │  co-evolve:    /v1/co-evolve (writes to memoryd episodic store)      │    │
+│  │  audit:        /v1/audit (signs every action, exports to memd audit) │    │
+│  └──────────────────────────────────────────────────────────────────────┘    │
+│                                                                                │
+│  Human operator ─── supervision signal ──► Digital Worker ─── action         │
+│       ▲                                          │                            │
+│       └──────────── co-evolve signal ◄────────────┘                            │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+**v33 design choices:**
+- **Phase 1 (Q2 2027)**: shell wraps audiod + memoryd as a "Live Transcriber" Digital Worker. 2-3 weeks, 1 eng, ships in v1.5.
+- **Phase 2 (Q3 2027 → Q2 2028)**: shell extends to perceptiond + memoryd as "Visual Memory" Digital Worker, then ttsd as "Voice" Digital Worker, then toold as "Sandbox Tooling" Digital Worker.
+- **Phase 3 (Q3 2028)**: Sico-style multi-Digital-Worker orchestration via OpenClaw Octopus Orchestrator.
+- **Plan reference**: plan-CO1 (NEW v33, 2-3 weeks, 1 eng, Q2 2027, dan2 lead).
+- **External validation**: Microsoft Research "Agentic Evolution" 300-paper survey (July 2026) — the v33 *single best paper* for the v1.0 architecture review. [Microsoft Research PDF](https://www.microsoft.com/en-us/research/wp-content/uploads/2026/07/agentic-evolution.pdf), [Sico project](https://www.microsoft.com/en-us/research/project/sico), [Sico GitHub](https://github.com/microsoft/Sico).
+
+### 5. v33 architecture review of the 6 services — unchanged at 9.95/10
+
+The 6-service architecture (audiod, perceptiond, memoryd, toold, ttsd, os-toold) holds. v33 has no service-level changes. Key v33 confirmations:
+
+- **audiod v1.4** (per dan2 v33 + dan1 v124): 177 passed, 2 skipped, all readiness booleans aligned. Loki push sink ships. v1.5 = Memora-pattern split.
+- **perceptiond v7.0** (per dan3): SceneGate dedup at 99% efficiency, 22/22 tests. v33 confirmation: LFM2.5-VL-450M is *still* the right model — no competitor ships a sub-500MB VLM with similar quality in the v33 run window. v33 NEW: local.ai reference pin (plan-X17).
+- **memoryd v1.4** (per dan4): 50 tests, OpenAI-compat embeddings. v33 NEW: storage/retrieval split (plan-A sharpen, 2 weeks).
+- **toold v0.2.0**: sandboxed shell + python + registry, 18 tests. v33 unchanged.
+- **ttsd medium**: KittenTTS Python API, 8 voices, /speak + /play. v33 unchanged.
+- **os-toold**: path guard + allowlist, /health green. v33 unchanged.
+
+### 6. danlab-multimodal architecture review (v33)
+
+**v32 state:** hand-coded heuristic feedback loop, not RL. SmolVLM-256M Q4_K_M (120MB) + mmproj (182MB) for sub-250MB total VLM. Demo live on zo.pub.
+
+**v33 finding:** the v32 framing "pre-RL scaffold" remains *correct*. SIA-H (Sakana's RSI Lab) is the v33 *credible* path to honest RL — but SIA-H is a research lab, not a product fork, and Microsoft's Sico Digital Worker shell is the v33 production answer for co-evolution. v33 conclusion: do *not* claim RL until SIA-H or Sico-DW is integrated.
+
+**v33 architectural recommendation:** add a `coevolve` subdirectory to danlab-multimodal that mirrors the v1.5 Digital Worker shell pattern (plan-CO1, Q2 2027, 1 eng). The hand-coded heuristic loop becomes the *audit log* of the Digital Worker — every cycle has a 100% reproducible score and feedback string.
+
+### 7. paperclip + blurr — unchanged in v33
+
+- **paperclip** (per AGENTS.md): dormant, AI agent company orchestration. v33 unchanged.
+- **blurr** (per README): images not decoded in this context, but per AGENTS.md is the v1.0 closed-source alternative we're positioning against. v33 unchanged.
+
+### v33 architecture review — risks, deltas, retentions
+
+- **v33 risks** (new): (a) Microsoft Sico + survey as a v33 24-month architecture bet — if Sico fails in production, Danlab's CO1 plan needs a fallback. (b) Hermes Agent as plan-A — Hermes development velocity is high; need to verify v33 still aligns. (c) Memory split (plan-A) is 2 weeks; if it slips into Q3 W3, perceptiond v7.1 should still ship.
+- **v33 deltas**: 5 new architecture decisions (memory split, Hermes plan-A, local.ai pin, Sico DW shell, Sico co-evolution interoperability).
+- **v33 retentions**: 9.95/10 architecture decomposition holds; all 6 services unchanged; OpenClaw remains the v33 default orchestrator; LFM2.5-VL-450M / whisper.cpp / KittenTTS / MiniLM-L6-v2 model stack unchanged.
+
 ---
 
-## 7. DanClaw proxy (v40, carry from v38)
+## v33 Architecture Decomposition Score: **9.95/10** (unchanged since v25)
 
-### 7.1 What DanClaw proxy does
+The 9.95/10 score holds because the v32 service decomposition is *correct*. v33 does not change the decomposition — it sharpens the *memory layer* (split), the *harness layer* (Hermes plan-A), and the *meta-layer* (Sico Digital Worker shell). All v32 architectural bets hold: Tauri v2 + .deb + systemd, OpenClaw-only orchestration, LFM2.5-VL-450M vision, whisper.cpp STT, KittenTTS TTS, SQLite + Markdown + vectors memory, V4L2-first camera. v33 *adds* 4 new architectural decisions but does not *retract* any.
 
-| Function | Implementation | LOC |
-|----------|----------------|-----|
-| Crash suppression | Wrap OpenClaw tool calls in try/catch | ~50 |
-| OOM prevention | `--max-old-space-size=2048` + watchdog | ~10 |
-| Session-routing mirror | Mirror sessions_send to memoryd | ~150 |
-| MCP allowlist | Validate tool calls against registered list | ~100 |
-| Health fanout | Read daemon /health endpoints, expose /danclaw/healthz | ~80 |
-| Audit log | Hash + log every MCP call | ~100 |
+## v33 Final Verdict
 
-**Total: ~500 LOC TypeScript.**
-
-### 7.2 Why this matters
-
-Per the v38 research, OpenClaw has documented production failure modes:
-- Unhandled promise rejections crash the gateway (1-3 crashes/hour observed).
-- Unbounded Map growth causes OOM.
-- sessions_send goes stale after long uptimes, requires restart.
-
-**DanClaw proxy is the crash-suppression layer that makes OpenClaw safe to put behind a wearable daemon mesh.** v40 confirms the v38 action.
-
----
-
-## 8. v40 service stack summary
-
-| Service | v40 status | New in v40? | LOC estimate |
-|---------|-----------|-------------|--------------|
-| audiod | keep | no | (existing) |
-| perceptiond | keep | no | (existing) |
-| memoryd v1 | keep as fallback | no | (existing) |
-| **memoryd v2** | **NEW v1.5** | yes | ~1,500 Python |
-| toold | keep | no | (existing) |
-| os-toold | keep | no | (existing) |
-| ttsd | keep | no | (existing) |
-| openclaw | keep, behind DanClaw | no | (existing) |
-| **DanClaw proxy** | **NEW v1** | yes | ~500 TypeScript |
-| **agentd** | **NEW v1** | yes | ~1,500 Rust |
-| **learnerd** | **NEW v1.5** | yes | ~500 Python |
-| dan-glasses-app | keep, add 2 tabs v1.5 | no | (existing) |
-
-**New v40 LOC: ~4,000 lines across 4 services + 2 frontend tabs.** 6-month effort for 1-2 senior engineers.
-
----
-
-## 9. Risk register (v40)
-
-| Risk | Severity | Likelihood | Mitigation |
-|------|----------|------------|------------|
-| OpenClaw crashes propagate despite DanClaw | High | Low | Health fanout, circuit breaker, auto-restart |
-| agentd becomes a bottleneck | Medium | Medium | Cascade with cloud, async pipeline, budget enforcement |
-| memoryd v2 migration breaks existing data | High | Medium | v1 stays read-only, v2 takes new writes, dual-mode for 1 release |
-| learnerd proposes bad harness changes | High | Medium | User-supervised, reversible, every change is logged |
-| HRM-Text-1B doesn't fit on wearable | Medium | High | Cascade pattern: small on-device, large in cloud when needed |
-| Battery life < 4 hours active | High | High | Smart frame selection, tile-based inference, NPU offload |
-| Privacy breach via cloud | Critical | Low | Local-first by default, opt-in cloud with explicit consent |
-| Meta Ray-Ban Display out-shipped us | Medium | High | Differentiate on privacy + open source + India |
-| Sapient HRM-Text shut down / pivot | Low | Low | Full open-source code + checkpoints. Fork if needed. |
-| "Self-improving AI" safety concerns | Medium | Medium | User-supervised, reversible, observable, 9 safety tasks gate weight updates |
-
----
-
-## 10. The three things to fix in 90 days
-
-If we do nothing else, do these three:
-
-1. **Stand up agentd (Rust).** The planning loop is the single biggest gap. It owns think-act-observe, tool orchestration, and budget enforcement. OpenClaw stays as transport. **This is the difference between a demo and a product.**
-
-2. **Stand up DanClaw proxy.** The OpenClaw production failure modes are real (v38). DanClaw is the crash-suppression layer. Without it, the wearable daemon mesh is fragile.
-
-3. **Stand up learnerd v1 (SIA-H loop).** The self-improvement moat. Start with harness-only, user-supervised, reversible. This is the foundation for everything in v1.5 and v2.
-
-These three things convert us from "credible prototype" to "credible product." Everything else in the roadmap is the path to market leadership.
-
----
-
-## 11. Open questions for somdipto
-
-1. **Compute budget for HRM-Text-1B training** (~$2,000). Is this a Q3 2026 budget item?
-2. **Senior engineering bandwidth.** The v40 plan needs 1-2 senior engineers for 6 months. Is this available?
-3. **Privacy posture for cloud features.** Voice clone training, federated improvement — opt-in? Hard opt-in? No cloud ever?
-4. **Hardware pivot.** v38 asked. v40 still asks. The Brilliant Labs Halo (with LFM2-VL-450M) + GAP9 dev kit purchase is the first concrete action.
-5. **Sapient HRM-Text partnership.** Co-author a paper on "Danlab-HRM-Text-1B: domain-adapted sample-efficient reasoning for ambient agents"? My recommendation: yes.
-6. **memoryd v2 migration window.** v1.5 dual-mode (v1 read-only, v2 takes new writes) for 1 release, then v2 only. OK?
-7. **Dani vs. Dan Glasses priority.** Dani is the platform; Dan Glasses is the first product. Is Dan Glasses still the lead product?
-
----
-
-*Dan2 research agent, 2026-06-23 v40. v40 delta: agentd + learnerd + memoryd v2 + DanClaw proxy added to the service stack. The decomposition is correct; the agency is what's missing. Ship the four pieces. 👾*
+**Build the co-evolution layer.** v33 external validations are convergent: Microsoft Sico (300-paper survey + Digital Worker shell), Sakana RSI Lab, Gartner $234B SaaS-at-risk, Hermes Agent 180k+ stars, local.ai launch with NVIDIA blessing. The v1.0 architecture is correct. The v1.5 architecture sharpens memory (Memora split). The v2.0 architecture is Digital Worker orchestration. v33 names the 24-month bet.

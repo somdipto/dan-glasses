@@ -1,6 +1,6 @@
 # audiod — Audio Pipeline Service (SPEC)
 
-**Status:** Shipped (v1.1)
+**Status:** Shipped (v1.6)
 **Owner:** DAN-2
 **Repo:** `dan-glasses/Services/audiod/`
 
@@ -42,7 +42,7 @@ Threading model:
 - `publish.py` — `TranscriptPublisher` (stdout / unix-socket / WebSocket)
 - `segment_timing.py` — bounded ring of recent per-segment durations, exposes count/max/p50/p95 + fixed bucket distribution (v1.2)
 - `config.yaml` — runtime config
-- `tests/` — 19 test files, 168 cases (1 sandbox-skipped)
+- `tests/` — 20 test files, 180 cases (deterministic — 5/5 full-suite runs pass clean; 2 sandbox-skipped)
 
 ## Public API
 
@@ -205,6 +205,60 @@ percent display.
 - `test_control_endpoints.py` — `/start /stop /restart /ptt /reload` JSON shape
 - `test_client.py` / `test_ws_stream.py` — sync HTTP + async WS client wiring
 - `test_real_audio_jfk.py` — real JFK sample (skipped if fixture missing)
+- `test_metrics_sink.py` — Loki push sink unit + integration tests (v1.3)
+
+## v1.6 changelog (2026-07-08)
+
+- **Test-harness stability hardening.** (a) `tests/test_metrics_sink.py` Loki stub now uses a `ThreadingHTTPServer` subclass with `SO_REUSEADDR` set before bind to dodge TIME_WAIT race when the test suite and the live daemon are both fighting for port reuse; (b) `tests/test_status_endpoint.py` replaces all hard-coded HTTP server ports (18093-18099) with `port=0` (kernel-assigned ephemeral) and reads the actual port back from `server.server_address[1]`; every test now restores `HealthHandler.pipeline = None` in a try/finally so the class-level singleton never leaks between tests. This is a test-only change, zero behavior change in the daemon, zero public-API change.
+
+## v1.5 changelog (2026-07-07)
+
+- **Test-suite rot fixed: `pytest tests/` no longer blows up at collection.** Two regressions had landed silently. The first: 14 of 22 test modules imported service code as top-level names (`from audiod import …`, `from transcription import WhisperTranscriber`) and only resolved when the package directory happened to be on `sys.path`. `pytest tests/` from the audiod root (or from `tests/`, or from `dan-glasses/`) raised `ModuleNotFoundError: No module named 'audiod' / 'transcription' / 'capture' / 'vad' / 'publish' / 'ptt' / 'client' / 'segment_timing' / 'metrics'`. The only test that didn't fail was `test_silence_e2e.py`, which carried its own `sys.path.insert(0, …parent.parent)`. The second: 3 tests in `test_metrics_sink.py` (`test_status_exposes_metrics_block`, `test_pipeline_observe_called_on_transcribe`, `test_pipeline_observe_skipped_when_transcribe_returns_empty`) opened `"config.yaml"` with a relative path and only worked from the audiod cwd.
+- **Fix.** Two conftests, additive and no-API-change:
+  1. `Services/audiod/conftest.py` — prepends the package dir to `sys.path` at session start. Picked up when pytest's rootdir is the audiod root or `dan-glasses/`.
+  2. `Services/audiod/tests/conftest.py` — same `sys.path` shim, plus a `audiod_config_path` fixture exposing the absolute `Services/audiod/config.yaml` so the 3 metrics-sink tests don't have to assume cwd.
+  3. `tests/test_silence_e2e.py` — dropped the per-file `sys.path.insert` and the now-unused `Path` import; the conftest is the canonical path.
+- **Why two conftests, not one.** Pytest only loads conftests at or below the collection rootdir. From `Services/audiod/tests/`, the rootdir is `tests/`, so a conftest one directory up (`audiod/conftest.py`) is invisible. Duplicating the shim in `tests/conftest.py` makes the suite green from any invocation cwd. The duplicate is 4 lines of idempotent `sys.path` munging — acceptable.
+- **Test coverage.** No new tests. This is a build-and-run fix, not a behavior change. The 3 metrics-sink tests now resolve their config under any cwd; the 14 collection errors are gone; the previous per-file shim is removed.
+- **Test count.** 177 passed, 2 skipped — same coverage as the v1.4 baseline, but now reachable from `pytest tests/` (audiod cwd), `pytest tests/` (tests/ cwd), and `pytest Services/audiod/tests/` (dan-glasses cwd).
+
+## v1.4 changelog (2026-07-04)
+
+- **`TranscriptPublisher.is_ready()` no longer reports `False` for stdout mode.** Previously, when `mode="stdout"` (the test suite default and the live daemon mode), `__init__` called `_start_ws_server()` and tried to bind `:8091`. If that bind failed (e.g. the live audiod already owned the port), the WS thread exited, `_ws_server.is_alive()` was False, and `is_ready()` returned `False` even though stdout mode doesn't need a WS listener at all. Three surgical edits in `publish.py`:
+  1. `__init__` no longer starts a WS server for `mode="stdout"`. Stdout mode never binds `:8091`; WS clients connect only when `mode="websocket"` (production) or `mode="both"` (dual-write).
+  2. `is_ready()` no longer requires a live WS thread for `mode="stdout"`. The `ws_ok` check is gated on `mode in ("websocket", "both", "ws")`; for stdout, `ws_ok` stays `True` (the existing `else: ws_ok = True` branch is now reachable and produces the right answer).
+  3. `stats()` unchanged; `ws_port` is still the configured port and remains useful for ops regardless of mode.
+- **Why this matters.** The publish `is_ready()` contract is what orchestrators (Kubernetes `readinessProbe`, the Tauri bootstrap wizard, the dan-glasses-app proxy) poll to decide audiod is "really up." A stdout-mode daemon reporting `False` because the WS thread died (port conflict, OOM during bind, slow startup) makes `/ready` lie. The fix is structural: stdout mode shouldn't depend on WS state at all.
+- **Test coverage.** Four new regression tests pin the contract:
+  `test_stdout_mode_no_ws_thread` (`_ws_server is None` after `TranscriptPublisher(mode="stdout")`),
+  `test_stdout_mode_ready_breakdown_unchanged` (breakdown still has keys `{mode, stdout, socket, websocket}` for back-compat),
+  `test_websocket_mode_starts_ws_thread` (mode="websocket" still starts a WS thread on the configured port),
+  `test_both_mode_starts_ws_and_socket` (mode="both" starts both).
+  Suite: 177 passed, 2 skipped.
+- **No re-arch.** Publish transport matrix is unchanged (stdout / socket / ws / both). WS handshake (RFC 6455) unchanged. Loki metrics sink (v1.3) unchanged. Live/Ready probe split (v1.1) unchanged. dan-glasses-app proxy unchanged.
+
+## v1.3 changelog (2026-07-02)
+
+- **Loki push sink ships `segment_timing` metrics.** Added `metrics.py`
+  (`LokiMetricsSink`) which posts the histogram snapshot to
+  `http://localhost:3100/loki/api/v1/push` every 10 s. Each observation
+  becomes a Loki log line of the form
+  `audiod_metric{service="audiod",kind="segment_timing",unit="ms"} p50_ms=… p95_ms=… count=…`,
+  queryable as `{service="audiod"} |~ "audiod_metric"`. Configured via
+  the `metrics:` block in `config.yaml`; `AUDIOD_METRICS=0` env var
+  disables at runtime, `AUDIOD_LOKI_URL` overrides the push target.
+- **`/status` exposes a `metrics` block.** Fields: `enabled`, `loki_url`,
+  `interval_s`, `pending`, `active_kinds`, `last_push_ts`, `pushes_ok`,
+  `pushes_failed`, `drops`. UI can render a "Loki shipping" health pill
+  off `enabled && pushes_ok > 0`.
+- **Failure isolation.** Any push error (URLError, non-2xx, oversized
+  body) is logged to stderr and bumps `pushes_failed`. A wedged Loki
+  cannot OOM the daemon — pending payload is bounded by `max_buffer`
+  (default 256), drop-oldest on overflow, counted in `drops`.
+
+## v1.2 changelog (2026-06-30)
+
+- **`/status` exposes `segment_timing` histogram.** Added count, max, p50, p95, and a small fixed bucket distribution for per-segment durations.
 
 ## v1.1 changelog (2026-06-30)
 

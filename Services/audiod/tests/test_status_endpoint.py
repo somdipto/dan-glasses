@@ -31,7 +31,7 @@ def _load_minimal_config():
             "language": "auto",
             "threads": 2,
         },
-        "publish": {"mode": "stdout", "socket_path": "/tmp/audiod-test.sock", "ws_port": 18091},
+        "publish": {"mode": "stdout", "socket_path": "/tmp/audiod-test.sock", "ws_port": 0},
         "push_to_talk": {"enabled": False, "hotkey": "space"},
     }
 
@@ -45,20 +45,37 @@ def _get_status(port: int) -> dict:
     return json.loads(body)
 
 
+def _spin_pipeline_server(cfg):
+    """Start a health server on an ephemeral port; return (server, port, pipeline).
+
+    Always restores HealthHandler.pipeline to None on teardown so the
+    class-level singleton cannot leak across tests.
+    """
+    pipeline = AudioPipeline(cfg)
+    prior_pipeline = HealthHandler.pipeline
+    HealthHandler.pipeline = pipeline
+    server = start_health_server(0)
+    port = server.server_address[1]
+    return server, port, pipeline, prior_pipeline
+
+
+def _teardown(server, prior_pipeline):
+    try:
+        server.shutdown()
+        server.server_close()
+    finally:
+        HealthHandler.pipeline = prior_pipeline
+
+
 def test_status_returns_extended_diagnostics():
     """The enriched /status should include device, model, sample rate, and uptime."""
     cfg = _load_minimal_config()
-    pipeline = AudioPipeline(cfg)
-    HealthHandler.pipeline = pipeline
-
-    port = 18099
-    server = start_health_server(port)
+    server, port, pipeline, prior = _spin_pipeline_server(cfg)
     try:
         time.sleep(0.1)
         body = _get_status(port)
     finally:
-        server.shutdown()
-        server.server_close()
+        _teardown(server, prior)
 
     assert body["service"] == "audiod"
     assert body["vad_ready"] in (True, False)
@@ -75,20 +92,22 @@ def test_status_returns_extended_diagnostics():
     assert body["segments_transcribed"] == 0
     assert "publisher" in body
     assert body["publisher"]["mode"] == "stdout"
-    assert body["publisher"]["ws_port"] == 18091
+    assert isinstance(body["publisher"]["ws_port"], int)
 
 
 def test_status_handles_pipeline_unset():
     """If no pipeline is registered, /status should still return valid JSON."""
+    prior = HealthHandler.pipeline
     HealthHandler.pipeline = None
-    port = 18098
-    server = start_health_server(port)
+    server = start_health_server(0)
+    port = server.server_address[1]
     try:
         time.sleep(0.1)
         body = _get_status(port)
     finally:
         server.shutdown()
         server.server_close()
+        HealthHandler.pipeline = prior
 
     assert body["service"] == "audiod"
     assert body["running"] is False
@@ -98,22 +117,16 @@ def test_status_handles_pipeline_unset():
 def test_segments_transcribed_increments():
     """Each published transcript should bump the counter."""
     cfg = _load_minimal_config()
-    pipeline = AudioPipeline(cfg)
-    HealthHandler.pipeline = pipeline
-
-    # Simulate 3 successful publishes
-    for _ in range(3):
-        with pipeline._lock:
-            pipeline._segments_transcribed += 1
-
-    port = 18097
-    server = start_health_server(port)
+    server, port, pipeline, prior = _spin_pipeline_server(cfg)
     try:
+        # Simulate 3 successful publishes
+        for _ in range(3):
+            with pipeline._lock:
+                pipeline._segments_transcribed += 1
         time.sleep(0.1)
         body = _get_status(port)
     finally:
-        server.shutdown()
-        server.server_close()
+        _teardown(server, prior)
 
     assert body["segments_transcribed"] == 3
 
@@ -126,17 +139,12 @@ def test_status_exposes_whisper_readiness_booleans():
     whisper_model alone don't make this distinction.
     """
     cfg = _load_minimal_config()
-    pipeline = AudioPipeline(cfg)
-    HealthHandler.pipeline = pipeline
-
-    port = 18096
-    server = start_health_server(port)
+    server, port, pipeline, prior = _spin_pipeline_server(cfg)
     try:
         time.sleep(0.1)
         body = _get_status(port)
     finally:
-        server.shutdown()
-        server.server_close()
+        _teardown(server, prior)
 
     # The new boolean fields are present and are real booleans.
     assert "whisper_binary_ok" in body
@@ -144,24 +152,19 @@ def test_status_exposes_whisper_readiness_booleans():
     assert isinstance(body["whisper_binary_ok"], bool)
     assert isinstance(body["whisper_model_ok"], bool)
     # The /status strings still exist for backward compatibility.
-    assert body["whisper_binary"] == "/tmp/fake-ggml-base.bin" or isinstance(body["whisper_binary"], str)
+    assert isinstance(body["whisper_binary"], str)
     assert body["whisper_model"] == "/tmp/fake-ggml-base.bin"
 
 
 def test_status_last_segment_ms_defaults_to_zero():
     """Before any segment is transcribed, last_segment_ms is 0."""
     cfg = _load_minimal_config()
-    pipeline = AudioPipeline(cfg)
-    HealthHandler.pipeline = pipeline
-
-    port = 18095
-    server = start_health_server(port)
+    server, port, pipeline, prior = _spin_pipeline_server(cfg)
     try:
         time.sleep(0.1)
         body = _get_status(port)
     finally:
-        server.shutdown()
-        server.server_close()
+        _teardown(server, prior)
 
     assert body["last_segment_ms"] == 0
 
@@ -171,25 +174,20 @@ def test_status_last_segment_ms_updates_after_transcribe():
     import numpy as np
 
     cfg = _load_minimal_config()
-    pipeline = AudioPipeline(cfg)
-    HealthHandler.pipeline = pipeline
-
-    # Stub the transcriber so we don't depend on whisper-cli / a real model.
-    pipeline.transcriber.transcribe = lambda segment, sr: {"text": "hello", "confidence": 0.9}
-
-    # Simulate a 1.5s mono segment at 16 kHz being transcribed successfully.
-    sr = 16000
-    samples = np.zeros(sr * 3 // 2, dtype=np.float32)  # 1.5s
-    pipeline._run_transcribe(samples, start_ms=0)
-
-    port = 18094
-    server = start_health_server(port)
+    server, port, pipeline, prior = _spin_pipeline_server(cfg)
     try:
+        # Stub the transcriber so we don't depend on whisper-cli / a real model.
+        pipeline.transcriber.transcribe = lambda segment, sr: {"text": "hello", "confidence": 0.9}
+
+        # Simulate a 1.5s mono segment at 16 kHz being transcribed successfully.
+        sr = 16000
+        samples = np.zeros(sr * 3 // 2, dtype=np.float32)  # 1.5s
+        pipeline._run_transcribe(samples, start_ms=0)
+
         time.sleep(0.1)
         body = _get_status(port)
     finally:
-        server.shutdown()
-        server.server_close()
+        _teardown(server, prior)
 
     # 1.5s = 1500 ms
     assert body["last_segment_ms"] == 1500
@@ -203,24 +201,19 @@ def test_status_last_segment_ms_resets_on_start():
     import numpy as np
 
     cfg = _load_minimal_config()
-    pipeline = AudioPipeline(cfg)
-    HealthHandler.pipeline = pipeline
-
-    # Prime last_segment_ms with a fake value.
-    with pipeline._lock:
-        pipeline._last_segment_ms = 4242
-
-    # _cmd_start exercises _reset_counters without touching the capture thread.
-    pipeline._cmd_start()
-    pipeline._cmd_stop()  # don't leave the capture loop running
-
-    port = 18093
-    server = start_health_server(port)
+    server, port, pipeline, prior = _spin_pipeline_server(cfg)
     try:
+        # Prime last_segment_ms with a fake value.
+        with pipeline._lock:
+            pipeline._last_segment_ms = 4242
+
+        # _cmd_start exercises _reset_counters without touching the capture thread.
+        pipeline._cmd_start()
+        pipeline._cmd_stop()  # don't leave the capture loop running
+
         time.sleep(0.1)
         body = _get_status(port)
     finally:
-        server.shutdown()
-        server.server_close()
+        _teardown(server, prior)
 
     assert body["last_segment_ms"] == 0

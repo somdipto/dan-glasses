@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import './TtsPanel.css';
+import { SERVICE_URLS } from '../lib/services';
 
 const VOICES = [
   'expr-voice-2-m',
@@ -16,7 +17,7 @@ interface TtsPanelProps {
   baseUrl?: string;
 }
 
-export default function TtsPanel({ baseUrl = 'http://localhost:8743' }: TtsPanelProps) {
+export default function TtsPanel({ baseUrl = SERVICE_URLS.ttsd }: TtsPanelProps) {
   const [text, setText] = useState('Dan Glasses is online. Bootstrap complete.');
   const [voice, setVoice] = useState('expr-voice-2-m');
   const [status, setStatus] = useState<'idle' | 'generating' | 'playing' | 'error'>('idle');

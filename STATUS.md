@@ -1,7 +1,7 @@
 # Dan Glasses — Live Status
 
-**Last verified:** 2026-06-30 10:25 IST (04:55 UTC) — **DAN-4 v109 punchlist closeout**
-**Next check:** 2026-07-01 07:30 IST
+**Last verified:** 2026-07-02 06:18 IST (00:48 UTC) — **DAN-4 v111 scheduled re-verify**
+**Next check:** 2026-07-03 07:30 IST
 
 ---
 
@@ -9,7 +9,7 @@
 
 | # | Daemon | Port | Status | Live since | Notes |
 |---|--------|------|--------|------------|-------|
-| 1 | **audiod** | 8090 + WS 8091 | ✅ live | 2026-06-19 | whisper.cpp base.en, Silero VAD, **150/150 passed, 1 skipped** (v1.1 live/ready split). `curl http://localhost:8090/live` → `{"status":"alive",...}`; `/ready` → `{"status":"ok","readiness":{"vad":true,"whisper_binary":true,"whisper_model":true,"publisher":true,"running":false}}` when initialized. `/health` is the back-compat alias for `/ready`. |
+| 1 | **audiod** | 8090 + WS 8091 | ✅ live | 2026-06-19 | whisper.cpp base.en, Silero VAD, **160/160 passed, 1 skipped** (v1.3: Loki push sink). `/status.metrics` exposes {enabled, loki_url, interval_s, pending, active_kinds, last_push_ts, pushes_ok, pushes_failed, drops}. E2E verified: 2 test observations → 1 push_ok in real Loki (stream labels `service=audiod, job=audiod`). |
 | 2 | **perceptiond** | 8092 | ✅ live | 2026-06-15 | LFM2.5-VL-450M on llama.cpp, watchful mode, 8/8 tests. Live receipt: `{"mode":"watchful","running":true,"frames_processed":4,"salient_frames":1,"descriptions":0,"vlm_busy":true,"vlm_queue_depth":1}`. |
 | 3 | **memoryd** | 8741 | ✅ live (persisted) | 2026-06-30 | SQLite + MiniLM-L6-v2. **16/16 tests**. **PERSISTENCE FIXED** — DB pinned to `/home/workspace/.cache/dan-glasses/memoryd/state.db` (db_persistent: true). V108 anomaly closed (see §memoryd below). |
 | 4 | **toold** | 8742 | ✅ live (persisted) | 2026-06-30 | sandboxed shell + Python + exec_file + named-tool exec. **18/18 tests**. Registry pinned to `/home/workspace/.cache/dan-glasses/toold/registry.json`. `/test` self-test: shell+python+registry+file all green in 36ms. |
@@ -103,6 +103,7 @@ It proves the daemons exist. It does **not** prove the wearable. The wearable is
 
 ## What changed since last check
 
+- **2026-07-02:** audiod v1.3 — Loki push sink shipping `segment_timing` p50/p95/count to `localhost:3100/loki/api/v1/push`. Disabled by env (`AUDIOD_METRICS=0`). 143 → 160 tests. End-to-end verified against real Loki.
 - **2026-06-30 04:55 UTC (DAN-4 v109 closeout):** Verified all 3 DAN-4 deliverables. Ran memoryd 16/16 + toold 18/18 + ttsd 6/6 = 40/40 tests green. Wizard roundtrip smoke test green (memoryd stored ids 28-31, toold /test in 36ms, ttsd 309658-byte WAV). React app rebuilt (`index-DP6-1lN9.js`, 220KB) and verified via https://dan-glasses-app-som.zocomputer.io. **memoryd v108 anomaly RESOLVED** — DB pinned to `/home/workspace/.cache/dan-glasses/memoryd/state.db`, db_persistent=true, 299KB on disk. No daemon restarts needed.
 - **2026-06-29 08:25 UTC (Dan1 v108 refresh):** Refreshed STATUS.md (last touched 2026-06-22, 7d stale). Re-probed all 8 daemons — all live. memoryd anomaly flagged in §memoryd. **No daemon restarts needed.**
 - **2026-06-22 00:50 UTC (DAN-4 run):** Re-verified memoryd, toold, ttsd, dan-glasses-app all live. Wizard roundtrip green. Fixed `Services/memoryd/test_wizard_roundtrip.py` ttsd timeout (15s → 45s, KittenTTS cold-load). STATUS.md refreshed. No daemon restarts needed.

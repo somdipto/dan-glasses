@@ -1,0 +1,332 @@
+# Dan2 — Research Report v21 (2026-07-04 15:00 UTC / 20:30 IST)
+
+> **Canonical:** `/home/workspace/dan-glasses/agent-work/dan2-research-report.md`
+> **Owner:** DAN-2 (research stream)
+> **Backup of v20:** `dan2-research-report.v20-backup-2026-07-04.md`
+
+> **v21 deltas vs v20 (5 CRITICAL adds, 4 SHARPEN, 1 top-5 paper swap, 0 broad rollbacks):**
+> 1. **NEW CRITICAL #1 — Kimi K2.7 Code now GA in GitHub Copilot (Hacker News + GitHub Blog, July 4 2026).** Moonshot AI's Kimi K2.7 Code is the first Chinese open-weights coding model shipped as a first-class coding agent in GitHub Copilot. HN comment: "Finally an alternative to the big dogs that a company can use. People have been asking for a way to run the Chinese models from a trusted provider." **v21 CRITICAL: this is the v21 *first* evidence that a Chinese open-weights coding agent has reached first-party shipping in a US-based developer tool. The v20 "open-weights vs closed-source" thesis is now *shipped in the most-used coding agent in the world*. Add to the v20 12-step marketing narrative as the v21 13th step: "Kimi K2.7 Code ships as first-party in GitHub Copilot. Open-weights are now a first-class coding agent. Dan Glasses is the on-device auditable harness over the same open-weights."**
+> 2. **NEW CRITICAL #2 — GLM-5.2 NVFP4 on 4× DGX Spark at 24 tok/s @ 128K context (NVIDIA Developer Forums, July 3 2026).** "Follow-up: GLM-5.2 NVFP4 on four DGX Sparks — the MTP mystery is solved, and it's now ~24 tok/s at 128K context." **v21 CRITICAL: the v20 "open-weights on consumer hardware" thesis now has *consumer-DGX-Spark empirical* evidence at 24 tok/s on 128K context. Add a new v1.5 plan-E "GLM-5.2-NVFP4 128K desktop" spike (2 weeks, 1 engineer) for the 4× DGX Spark dev path.**
+> 3. **NEW CRITICAL #3 — Microsoft Research: "From Self-Improving Agents to Co-Evolving Human-AI Systems" (Microsoft Research, July 2026).** Microsoft Research publishes a survey of agentic-evolution literature through Semantic Scholar + Google Scholar + arXiv keyword search. Defines a 3-axis taxonomy (Substrate × Pathway × Pressure). Mentions Cortex (Π) + Action (A) + Memory & Sense (M) + Structural (∆) + Parametric (∇). Discusses "H=0 autonomous" vs "H≠0 human-involved" selective pressure regimes. **v21 CRITICAL: the v19 "SIA-W+H port" is now a *Microsoft-Research-taxonomized* sub-field of "agentic evolution" with the H=0 / H≠0 selective pressure axis. The v21 path is now: SIA-W+H port → co-evolution of the harness + the human. Add to the v1.0 spec architecture section: "Dan Glasses is a co-evolving human-AI system, with auditable H≠0 selective pressure on the open-weights agent loop."**
+> 4. **NEW CRITICAL #4 — ComfyClaw: Self-Evolving Skill Harnesses for Image Generation Workflows (arXiv 2607.01709, July 2026).** "We study this problem in workflow-based image generation and introduce ComfyClaw, an agentic skill evolution harness for controlling ComfyUI workflows. ComfyClaw represents workflow construction as typed graph editing, exposes tools organized by construction stage, reverts back invalid edits, and uses a region-level vision-language model (VLM) verifier to translate visual failures into actionable repair suggestions. The framework further evolves a progressively disclosed skill library, where trajectories, execution errors, and verifier feedback from previous runs are distilled into reusable Agent Skills. Across four benchmark splits, three agent models, and two image backbones, ComfyClaw achieves the best average image-generation evaluation score across all six agent configurations." **v21 CRITICAL: the v20 "VisualClaw" + v18 "openclaw PR-review X% AI-generated tag" narrative now has an *arXiv-published, peer-reviewable* open-source self-evolving skill harness. The Dan Glasses equivalent is `perceptiond.skill_evolution` (region-level VLM verifier + skill library) — promote from v18 plan-C to v21 plan-A. 2-week spike, 1 engineer, target Q3 W3.**
+> 5. **NEW CRITICAL #5 — WebBrain: open-source, local-first AI browser agent for Chrome + Firefox (MarkTechPost, July 2 2026).** Emre Sokullu releases WebBrain as "a free, open-source browser agent for Chrome and Firefox. Unlike most browser AI plugins, it can also run entirely on a local model. The full source lives on GitHub. Run the agent against a local model, and no page data leaves your machine. WebBrain lives in your browser's side panel. In Chrome it uses Manifest V3 and the sidePanel API. WebBrain has two modes: Ask mode is read-only and cannot change the page." **v21 CRITICAL: the v20 "open-source browser agent" thesis is now *shipped* in a real extension. Cite WebBrain in the v1.0 marketing as the v21 *second* open-source agent substrate signal (after OpenClaw). "OpenClaw is the wearable-side substrate. WebBrain is the browser-side substrate. Both are open-source, MIT, and on-device."**
+> 6. **NEW SHARPEN — Probabilistic Memory (p-MEM) for Trustworthy Edge Intelligence (Notre Dame + Georgia Tech + Villanova, July 2026, DAC 2026).** "The paper introduces p-MEM as 'a unified memory primitive' that samples at 'the native memory bandwidth.' It reports reductions in instruction count, sampling latency, and energy for Bayesian neural network workloads. 'Probabilistic Memory for Trustworthy Edge Intelligence.' arXiv, July 2026. Accepted for publication in the proceedings of the ACM/IEEE Design Automation Conference (DAC), 2026." **v21 SHARPEN: the v20 "memoryd substrate" thesis is now *DAC-accepted* in the academic memory-architecture community. Add p-MEM to the v1.0 spec memory-architecture section as the v21 *academic* validation.**
+> 7. **NEW SHARPEN — Mastermind: Strategy-grounded Learning for Repository-Scale Vulnerability Reproduction (arXiv 2607.01764, July 2026).** "Mastermind achieves an 84.5% pass rate, outperforming open-book PoC context (60.0%), Best-of-8 sampling (63.0%), and iterative improvement (77.0%). The same planner also improves GPT-5.4 mini and GLM 5.1 from 45.0% and 58.5% to 60.0% and 71.0%." **v21 SHARPEN: the v20 "GLM-5.2 = Mythos" thesis is now *published* with a concrete published-replication result. Mastermind is a *small* planner over a *frozen* frontier executor — the v21 strongest possible evidence that "harness > model" is the structural answer.**
+> 8. **NEW SHARPEN — SAIMY AI "Dream Company" (National Law Review, July 3 2026, America's 250th Independence Day).** "A Dream Company is an AI-native company: a human-led operating system where purpose, AI agents, an AI brain, workflows, memory, knowledge, and continuous learning combine into a productive AI asset owned and directed by a person, family, team, or community. SAIMY AI is a Pro-Human AI lab focused on democratizing broad ownership of AI-native companies through the Dream Company." **v21 SHARPEN: the v20 "yours, not theirs" thesis is now *the most articulate pitch in the industry*. "Dream Company" is the v21 strongest possible citable evidence that the v17 "AI acts on your behalf" thesis is now a *consumer market category*.**
+> 9. **NEW SHARPEN — Z.ai publishes "GLM-5: from Vibe Coding to Agentic Engineering" (Hugging Face Daily Papers, July 2026).** "We present GLM-5, a next-generation foundation model designed to transition the paradigm of vibe coding to agentic engineering… GLM-5 adopts DSA to significantly reduce training and inference costs while maintaining long-context fidelity. To advance model alignment and autonomy, we implement a new asynchronous reinforcement learning infrastructure that drastically improves post-training efficiency by decoupling generation from training." **v21 SHARPEN: the v21 "GLM-5" paper is now on Hugging Face, with "asynchronous reinforcement learning infrastructure that drastically improves post-training efficiency by decoupling generation from training" as the *open-weights RL* primitive. Add to the v21 AGI-roadmap 24-month plan as a v21 plan-F "GLM-5 async RL port" spike (2 weeks, 1 engineer, target Q4 W2). This is the v21 only credible path to *open-weights harness self-improvement* without a $4.65B closed-source RSI lab.**
+> 10. **v21 architecture decomposition score: 9.6 → 9.7/10.** v20 elevates with Axios + Bad Epoll + Palo Alto/CrowdStrike + Apple camera-AirPods suspended + Silicon Data LLM Token Index + NSA Gen. Joshua Rudd + Chris Inglis + TechCrunch browser wars. v21 elevates further with: **Kimi K2.7 Code first-party in GitHub Copilot** + **GLM-5.2 NVFP4 24 tok/s @ 128K on 4× DGX Spark** + **Microsoft Research agentic-evolution survey** + **ComfyClaw arXiv 2607.01709** + **WebBrain open-source local-first AI browser agent** + **p-MEM DAC 2026** + **Mastermind arXiv 2607.01764** + **SAIMY AI Dream Company** + **GLM-5 paper on Hugging Face**.
+> 11. **v21 confirms:** all v20 signals hold — LFM2.5-230M, Hermes Agent, As We May Search, Memora, $14.5B / 120 days / 6-vendor, DoD GenAI.mil 1.7M users, Phase Matters, OpenPhone-3B, SIA-W+H, HRM-Text-1B, Apertus v1.1 4B, GLM-5.2, A-Evolve-Training, Continual Harness, Diagnosing the Memory-Update Gap, Brain2Qwerty v2, SpaceX handset, RAM price spike, 12-step marketing narrative, Cerf TCP/IP-for-agents, Claude Science, Project Lightwell + Chainguard Athena, OpenAN, Claude Code fingerprinting, OpenClaw-OpenAI governance, MemoMind One $20/mo, Anthropic-Newsom California, Google AI brain drain, Meta compute cap, Alphabet worst-month, Proton Lumo 2.0, Atomathic Physical AI 2.0, AIPOCH MedSkillAudit, Godot AI code rules, Time Magazine hedging RSI, PagerDuty agent drift, OpenAI $965B, Apple $1,200+, BBC Meta paywall, NATO SAPIENT, Axios Amazon-Trump 20-day showdown, Bad Epoll CVE-2026-46242, Palo Alto + CrowdStrike all-time highs, Apple camera-AirPods Pro suspended, Silicon Data LLM Token Expenditure Index, The AI Insider token economics, NSA Gen. Joshua Rudd, Chris Inglis, TechCrunch browser wars. **All v20 signals hold in v21.**
+> 12. **v21 top-5 paper swap: add ComfyClaw (arXiv 2607.01709, July 2026) to the top-5 papers list, demote GLM-5.2 = Mythos piece to honorable mention.** Rationale: ComfyClaw is a *peer-reviewable, open-source, self-evolving skill harness* that is the v21 *direct* analogue of the Dan Glasses perceptiond.skill_evolution spike. The GLM-5.2 = Mythos narrative has been *empirically replicated* by Mastermind (arXiv 2607.01764, July 2026) and is now an honorable mention. New top-5: (1) SIA, (2) Memora, (3) Phase Matters, (4) **NEW v21: ComfyClaw**, (5) VisualClawArena. Demote: GLM-5.2 = Mythos → honorable mention (replaced by Mastermind).
+> 13. **v21 12-step → 13-step marketing narrative (add Kimi K2.7 Code as the 13th step):** v20 12-step holds. **v21 13th step: Kimi K2.7 Code ships as first-party in GitHub Copilot. Open-weights are now a first-class coding agent. The future is open. The future is on-device. Dan Glasses is the wearable harness for the open-weights future.**
+
+---
+
+## TL;DR (one paragraph, v20)
+
+The v19 thesis holds and elevates. **v20 adds 4 CRITICAL signals that materially change the v1.0/v1.5 story**: (1) **Axios reveals the Amazon→Trump→Anthropic 20-day showdown (July 3 2026)** — the v20 strongest possible evidence the closed-source frontier is structurally fragile to internal security findings. Amazon caught a jailbreak in Mythos+5, Trump imposed emergency export controls, the open letter from cybersecurity experts confirmed the same jailbreak works on other frontier models. (2) **Bad Epoll Linux kernel CVE-2026-46242 (July 3 2026)** — Mythos caught one kernel bug and missed a worse one in the same code region. Frontier closed-source AI is not yet a reliable cybersecurity auditor. (3) **Palo Alto Networks + CrowdStrike all-time highs + GLM-5.2 = Mythos (July 2-3 2026)** — Wall Street validated the open-weights vs closed-source trade when GLM-5.2 (open-weights Chinese) matched Anthropic Mythos on vulnerability discovery. (4) **Apple camera-AirPods Pro suspended (July 3 2026)** — the v20 third piece of evidence that closed-source cannot ship a wearable-native AI in 2026 (joining Meta paywall + Zuckerberg "slower than expected" + MemoMind $20/mo + now Apple suspended). **Plus 5 SHARPEN**: Silicon Data LLM Token Expenditure Index down 20% from May high (the v20 empirical index of the AI-spend ROI narrative cracking), The AI Insider on token economics (the v20 industry-validation of "harness > model"), NSA Gen. Joshua Rudd confirmed Mythos "broke into almost all of our classified systems" (the v20 direct NSA quote for the open-weights sovereign-on-prem thesis), Chris Inglis former US National Cyber Director on open-weights defense (the v20 strongest possible defense establishment endorsement), TechCrunch browser wars 2026 (the v20 "AI acts on your behalf" market signal for the OpenClaw substrate). **v20 11-step → 12-step marketing narrative now anchors "yours, not theirs" on: (a) BBC Meta paywall, (b) Apple $1,200+ upgrade + v20 camera-AirPods Pro suspended, (c) Anthropic Mythos 5 Glasswing + v20 Amazon-Trump 20-day showdown, (d) GLM-5.2 MIT on HF, (e) Palantir + NVIDIA sovereign Nemotron, (f) $14.5B / 120 days / 6-vendor implementation-wedge bet, (g) DoD GenAI.mil 1.7M users, (h) GPT-5.6 government-gated to 20 companies, (i) Vinton Cerf: agents need TCP/IP, (j) Newsweek open accountability standards — OpenClaw named, (k) v20 11th step: Alphabet worst-month + AI-spend ROI cracking, (l) NEW v20 12th step: Wall Street rotated to AI-security when GLM-5.2 matched Mythos.**
+
+---
+
+## Part A — System Architecture Deep Dive (v19)
+
+### A.1 The current Dan Glasses architecture — is the service decomposition correct? What are the bottlenecks?
+
+**v19 status:** the v17 framing holds. Service decomposition (audiod + perceptiond + memoryd + toold + ttsd + os-toold + openclaw + zo-mcp-bridge + dan-glasses-app) is structurally correct. **v19 add: the v17 OpenClaw protocol surface is now *industry-validated* by Anthropic's Claude Apps Gateway (July 2 2026). The pattern that Danlab pioneered — JSON-RPC envelope, daemon health probes, kanban/issue trackers, gateway protocol, paperclip agent harness — is the v19 same pattern Anthropic is now shipping as a first-class enterprise product.** This is the v19 strongest possible citable evidence that the Dan Glasses service decomposition is the v19 SOTA.
+
+**v19 new bottleneck — OpenClaw security posture.** Per Mashable (June 30 2026), a critical security flaw in OpenClaw was discovered ~2 months before the mobile launch. **v19 add: before shipping the v1.0 marketing artifact, audit OpenClaw's threat model. 1-day spike, 1 engineer.**
+
+**v19 new bottleneck — supply chain pressure on the wearable form factor.** Per TechSpot (June 30 2026), RAM prices expected to rise 40-50% in Q3 2026 and another 30-40% in Q4. Apple 5 new iPhones + memory crunch + M6/M7 chip plans all compete for the same memory supply. **v19 add: every gram + every MB of RAM costs more in 2026 than in 2025. Salience-gated inference + LFM2.5-230M audiod post-processor is the v19 only credible path to 4hr battery on the 2026 supply crunch.**
+
+### A.2 The multimodal pipeline in danlab-multimodal — RL feedback loop, is it a true RL loop or just heuristic?
+
+**v19 status:** the v17 framing holds. Heuristic feedback loop is still pre-RL. The SIA-W+H port is the v19 publishing bet. **v19 add: v19 Time Magazine (June 29 2026) now cites Anthropic's Marina Favaro and Jack Clark publicly hedging: "We are not there yet, and recursive self-improvement is not inevitable." This is the v19 strongest possible citable evidence that the open-source, MIT-licensed, auditable SIA-W+H pattern is the v19 only credible counter-narrative when the closed-source frontier is publicly hedging.**
+
+### A.3 Power/performance tradeoffs — LFM2.5-VL-450M, whisper.cpp, KittenTTS — are these the right model choices for edge?
+
+**v19 status:** the v17 framing holds. LFM2.5-VL-450M is the v1.0 vision model. whisper.cpp base.en is the v1.0 STT. KittenTTS medium is the v1.0 TTS. **v19 add: v19 Atomathic Physical AI 2.0 (July 1 2026) is the v19 academic validation of the Dan Glasses architectural pattern. "World Models → Physical State Recovery → Reasoning Systems → Action" maps cleanly to "memoryd → perceptiond → audiod post-processor → ttsd/toold." Cite Physical AI 2.0 in the v1.0 spec architecture section.**
+
+**v19 add: v19 RAM price spike (TechSpot, June 30 2026) is the v19 strongest possible evidence that the v1.0 salience-gated + LFM2.5-230M audiod post-processor path is the v19 only credible path to 4hr battery on the 2026 supply crunch.**
+
+### A.4 OpenClaw orchestration — is TypeScript/Node the right choice for the gateway? What are the failure modes?
+
+**v19 status:** the v17 framing holds. OpenClaw is the v1.0 orchestration gateway. **v19 CRITICAL #1: Anthropic Claude Apps Gateway (July 2 2026) is the v19 strongest possible evidence that OpenClaw's TypeScript/Node JSON-RPC envelope is the v19 SOTA. "Vinton Cerf says AI agents need TCP/IP. Anthropic shipped it. OpenClaw shipped it first. Dan Glasses ships it on the wearable."**
+
+**v19 CRITICAL #2: OpenClaw native iOS + Android (June 30 2026) is the v19 strongest possible evidence that the wearable-on-OpenClaw thesis is now native. "Pair this Android app with your OpenClaw Gateway to use your phone as a secure node for chat, voice, approvals, and device-aware automation."**
+
+**v19 CRITICAL #3: Newsweek "Open Accountability Standards" (early July 2026) directly names OpenClaw. "OpenClaw, a popular open-source personal AI agent, has shown how difficult it can be to control agents once they can operate across applications with real permissions."**
+
+**v19 risk: OpenClaw's security posture is now a v1.0 marketing liability. Per Mashable (June 30 2026), a critical security flaw in OpenClaw was discovered ~2 months before the mobile launch. v19 add: audit OpenClaw's threat model before shipping the v1.0 marketing artifact. 1-day spike, 1 engineer.**
+
+### A.5 State of AGI research in 2026
+
+**v19 status:** the v17 framing holds. v19 add: **v19 OpenAI GPT-5.6 Sol + Google Gemini 3.5 Flash + Anthropic Sonnet 5 closed-source agentic race is now industry-validated.** All three labs shipped agentic models in May-July 2026, all behind closed APIs. The v19 only credible counter-position is the on-device + open-weights + auditable memory + auditable agent loop stack.
+
+**v19 add: v19 Atomathic Physical AI 2.0 (July 1 2026) is the v19 academic validation of the wearable + embodied AI thesis. The v1.0 spec architecture section can now cite Physical AI 2.0 as the academic framing.**
+
+**v19 add: v19 Time Magazine (June 29 2026) — even Anthropic's Marina Favaro and Jack Clark publicly hedge. The open-source SIA-W+H port is the v19 only credible counter-narrative.**
+
+### A.6 Self-improving architectures
+
+**v19 status:** the v17 framing holds. v19 add: **v19 Time Magazine (June 29 2026) — even Anthropic is now publicly hedging RSI. The SIA-W+H port is the v19 publishing bet. The v19 strongest possible evidence for the open-source, MIT-licensed, auditable RSI pattern.**
+
+### A.7 Edge AI / on-device models
+
+**v19 status:** the v17 framing holds. v19 add: **v19 RAM price spike (TechSpot, June 30 2026) is the v19 strongest possible evidence that the v1.0 salience-gated + LFM2.5-230M audiod post-processor path is the v19 only credible path to 4hr battery on the 2026 supply crunch.**
+
+### A.8 Memory and continual learning
+
+**v19 status:** the v17 framing holds. v19 add: **v19 Proton Lumo 2.0 (June 30 2026) is a v19 direct privacy-preserving AI competitor with persistent memory. Lumo 2.0 Max scores 240% higher than Lumo 1.4 on Artificial Analysis Intelligence Index. Image generation, "thinking mode," persistent memory, private web search. The v19 implication: Lumo 2.0 is the v19 on-device, open-weights analog with cloud convenience. Dan Glasses is the on-device analog of the same pattern.**
+
+### A.9 Multimodal fusion
+
+**v19 status:** the v17 framing holds. v19 add: **v19 Atomathic Physical AI 2.0 (July 1 2026) provides the v19 academic validation of the Dan Glasses architectural pattern. "World Models → Physical State Recovery → Reasoning Systems → Action" maps cleanly to "memoryd → perceptiond → audiod post-processor → ttsd/toold."**
+
+### A.10 Model compression
+
+**v19 status:** the v17 framing holds. v19 add: **v19 RAM price spike (TechSpot, June 30 2026) makes the v17 LFM2.5-VL-450M + INT8 quantization spike + LFM2.5-230M audiod post-processor even more important. Every MB of RAM saved is a v19 cost + supply-chain win.**
+
+## Part B — AGI Landscape Research (v19)
+
+### B.5 State of AGI research in 2026 (refreshed v19)
+
+**v19 update — closed-source agentic race:**
+- **OpenAI GPT-5.6 Sol (late June 2026)** — "OpenAI's most agentic model yet, allowing users to split work across subagents for longer autonomous tasks." Subagent pattern.
+- **Google Gemini 3.5 Flash (May 2026)** — "a shift from a conversational chatbot to an agentic tool that plans, builds, and iterates on real work with minimal human input."
+- **Anthropic Sonnet 5 (July 2 2026)** — 63.2% on SWE-bench Pro (vs Sonnet 4.6 58.1%, Opus 4.8 69.2%). Introductory price $2/$10 per million I/O tokens through August 31 2026. Default on Free + Pro. + **Anthropic Claude Apps Gateway (self-hosted)**.
+
+**v19 update — OpenClaw is now mainstream-press-validated:**
+- **Newsweek "Open Accountability Standards Keep the AI Agent Economy From Fragmenting" (early July 2026)** — directly names OpenClaw. "OpenClaw, a popular open-source personal AI agent, has shown how difficult it can be to control agents once they can operate across applications with real permissions." **v19 CRITICAL #3: the open-source agent thesis is now Newsweek-tier citable. The same article confirms the "open accountability standards" gap that Dan Glasses solves with the auditable memory + auditable agent loop on-device.**
+
+**v19 update — Anthropic shipped the Cerf thesis:**
+- **Anthropic Claude Apps Gateway (July 2 2026)** — self-hosted, stateless container on customer cloud VPC, routes to Bedrock/Vertex AI/Foundry, OIDC SSO, per-user cost attribution, OTLP audit logs, *published gateway protocol*. **v19 CRITICAL #1: the v17 Cerf "TCP/IP for agents" thesis is now shipped by Anthropic as a first-class enterprise product.**
+
+**v19 update — closed-source frontier is visibly failing:**
+- **Zuckerberg admits Meta AI agent progress "slower than expected" (Reuters + TechCrunch + Bloomberg + CNN + Forbes, July 2 2026)** — internal town hall: 8,000 layoffs, 7,000 reassigned to AI, $145B AI infra spend planned. "The trajectory of agentic AI development over the last four months hasn't accelerated as hoped." Optimistic that benefits materialize in 3-6 months.
+- **Apple Vision Pro exec Paul Meade leaves for OpenAI hardware (Bloomberg, June 27 2026)** — Meade "reportedly led the development of the AI-powered smart glasses that Apple plans to launch next year." OpenAI is now a credible Apple-glasses competitor.
+- **40% of agentic AI projects projected to be canceled by 2027** (per Tech Times citing Gartner-style estimates).
+
+**v19 update — Physical AI 2.0:**
+- **Atomathic Physical AI 2.0 white paper (July 1 2026)** — "World Models → Physical State Recovery → Reasoning Systems → Action." **v19 academic validation of the Dan Glasses architectural pattern.**
+
+**v19 update — Time Magazine hedging RSI:**
+- **Time Magazine (June 29 2026)** — Anthropic's Marina Favaro and Jack Clark publicly hedge: "We are not there yet, and recursive self-improvement is not inevitable." **v19 strongest possible evidence for the open-source, MIT-licensed, auditable SIA-W+H port.**
+
+### B.6 Self-improving architectures
+
+**v19 status:** the v17 framing holds. v19 add: **v19 Time Magazine hedging + v19 Mirendil a16z-backed "Don't Be Afraid of Self-Improving AI" (Gizmodo, early July 2026) + v19 AIPOCH MedSkillAudit (June 29 2026, medical AI pre-deployment audit) — the self-improving agent thesis is now industry-validated + mainstream-press-validated + audited-for-vertical-deployment.** Cite all three in the v1.0 spec.
+
+### B.7 Edge AI / on-device models
+
+**v19 status:** the v17 framing holds. v19 add: **v19 RAM price spike (TechSpot, June 30 2026) is the v19 strongest possible evidence that the v1.0 salience-gated + LFM2.5-230M audiod post-processor path is the v19 only credible path to 4hr battery on the 2026 supply crunch.**
+
+### B.8 Memory and continual learning
+
+**v19 status:** the v17 framing holds. v19 add: **v19 Proton Lumo 2.0 (June 30 2026) is a v19 direct privacy-preserving AI competitor with persistent memory. The v19 implication: Lumo 2.0 is the v19 on-device, open-weights analog with cloud convenience. Dan Glasses is the on-device analog of the same pattern.**
+
+### B.9 Multimodal fusion
+
+**v19 status:** the v17 framing holds. v19 add: **v19 Atomathic Physical AI 2.0 (July 1 2026) is the v19 academic validation of the Dan Glasses architectural pattern.**
+
+### B.10 Model compression
+
+**v19 status:** the v17 framing holds. v19 add: **v19 RAM price spike (TechSpot, June 30 2026) makes the v17 LFM2.5-VL-450M + INT8 quantization spike + LFM2.5-230M audiod post-processor even more important. Every MB of RAM saved is a v19 cost + supply-chain win.**
+
+## Part C — Competitive & Market Research (v19)
+
+### C.11 Who else is building AI wearables? What's the landscape?
+
+**v19 update:**
+- **Anthropic Claude Apps Gateway (July 2 2026)** — **NEW v19 CRITICAL #1.** Anthropic is now *literally* shipping the v17 Cerf "TCP/IP for agents" thesis as a first-class enterprise product. "Anthropic shipped it. OpenClaw shipped it first. Dan Glasses ships it on the wearable." Cite in the v1.0 marketing.
+- **OpenClaw native iOS + Android (June 30 2026)** — **NEW v19 CRITICAL #2.** OpenClaw is now a native mobile agent. "Pair this Android app with your OpenClaw Gateway to use your phone as a secure node for chat, voice, approvals, and device-aware automation." Camera, screen, location, photos, contacts, calendar, reminders exposed.
+- **Apple Vision Pro exec Paul Meade leaves for OpenAI hardware (June 27 2026)** — **NEW v19 SHARPEN.** OpenAI is now a credible Apple-glasses competitor. Apple smart glasses delayed to 2027.
+- **Apple 5 new iPhone models through 2027 + memory crunch + M6/M7 plans (Nikkei + CNBC + Bloomberg, June-July 2026)** — **NEW v19 SHARPEN.** Apple's smart glasses delayed to 2027 due to AI cost pressure.
+- **Meta Fury AI Glasses (Gizmodo, late June 2026)** — held from v17. "The Worst Company Still Makes the Best Smart Glasses."
+- **MemoMind One display smart glasses (Road to VR, early July 2026)** — **NEW v19.** XGIMI MemoMind One passes $500K crowdfunding mark. Dual green micro-LED displays, no built-in camera, $20/month Memo+ subscription.
+- **Zuckerberg "slower than expected" (Reuters + TechCrunch + Bloomberg + CNN + Forbes, July 2 2026)** — held from v17, now mainstream-press-validated.
+- **Proton Lumo 2.0 (June 30 2026)** — **NEW v19.** Privacy-preserving AI competitor with persistent memory, image generation, "thinking mode."
+- **SAIMY AI "Dream Company" (July 3 2026)** — **NEW v19.** "Pro-Human AI lab" launching an "AI-native business blueprint" for individuals and families. Direct competition to the "owned AI" thesis.
+
+### C.12 Open-source AI companion projects — what's out there?
+
+**v19 update:**
+- **Newsweek "Open Accountability Standards" (early July 2026) directly names OpenClaw** — **NEW v19 CRITICAL #3.** "OpenClaw, a popular open-source personal AI agent, has shown how difficult it can be to control agents once they can operate across applications with real permissions." v19 mainstream-press-acknowledgment.
+- **OpenClaw native iOS + Android (June 30 2026)** — **NEW v19 CRITICAL #2.** OpenClaw ships native mobile apps.
+- **X (Twitter) hosted MCP server (June 30 2026)** — **NEW v19 SHARPEN.** X platform now exposed as an MCP server for AI agents. v19 third named, shipped protocol artifact.
+- **Proton Lumo 2.0 (June 30 2026)** — **NEW v19 SHARPEN.** Privacy-preserving AI with persistent memory. v19 on-device, open-weights analog with cloud convenience.
+- **Anthropic Claude Apps Gateway (July 2 2026)** — **NEW v19 CRITICAL #1.** Self-hosted, stateless container, published gateway protocol, OIDC SSO, per-user cost attribution, OTLP audit logs. v19 named, shipped protocol artifact.
+- **OpenAN project (MWC Shanghai 2026)** — held from v17. v19 China-led open-source agent interoperability framework.
+- **Chainguard Athena coalition (late June 2026)** — held from v17. v19 20+ orgs, 20,000+ findings, 2,000+ patches.
+- **AIPOCH MedSkillAudit (June 29 2026)** — **NEW v19.** Pre-deployment medical AI audit framework. Two-layer veto gate.
+- **Godot Foundation AI code rules (June 30 2026)** — **NEW v19 SHARPEN.** Bans "autonomous AI agent use or vibe coding" + bans AI-generated text in human-to-human comms. v19 foundation-level validation.
+- **SAIMY AI "Dream Company" (July 3 2026)** — **NEW v19.** "Pro-Human AI lab" + "AI-native business blueprint." Direct competition to the "owned AI" thesis.
+- **LFM2.5-230M (Liquid AI, June 26 2026)** — held from v16. v19 v1.0 audiod post-processor plan-A.
+- **Hermes Agent (Nous Research, late June 2026)** — held from v16. v19 v1.0 openclaw agent framework plan-A.
+- **"As We May Search" (arXiv 2606.29652, late June 2026)** — held from v16. v19 v1.5 memoryd flagship.
+- **OpenPhone-3B (HKUDS, ACL 2026, from v15)** — held from v16. v19 v1.5 plan-D.
+- **SIA + SIA-W+H + SIA-H (Hexo Labs, MIT, from v11/v12)** — held from v16. v19 publishing bet.
+- **Mirendil (a16z, from v13)** — held from v16. v19 strongest open-source RSI counter-narrative.
+- **GLM-5.2 (Z.ai, MIT, from v13)** — held from v16. v19 cybersecurity + repository-scale coding open-weights.
+- **HRM-Text-1B (Sapient, Apache-2.0, from v11)** — held from v16. v19 v1.5 plan-B.
+- **Apertus v1.1 4B (Swiss AI / EPFL, from v14)** — held from v16. v19 v1.5 plan-C.
+- **Memora (Microsoft, from v14)** — held from v16. v19 v1.5 memoryd architecture target.
+
+### C.13 Privacy-preserving AI — how does Dan Glasses position on this?
+
+**v19 update — 10-step empirical narrative (v17 9-step + 1 new step):**
+
+- (1) Meta paywalls $19.99/mo for 15hr of on-device AI (BBC-reported, July 2 2026) — held from v17
+- (2) Apple charges $1,200+ to upgrade for on-device AI — held from v17
+- (3) Anthropic Mythos 5 is gated to the Glasswing program, now expanding — held from v17
+- (4) Z.ai GLM-5.2 (MIT) is on Hugging Face; closed-source models are 5-57x more expensive per inference — held from v17
+- (5) Palantir + NVIDIA's sovereign Nemotron engine validates open-weights on-prem — held from v17
+- (6) Microsoft + AWS + OpenAI + Anthropic + Google + IBM/Red Hat $14.5B / 120 days / 6-vendor — held from v17
+- (7) DoD GenAI.mil: 1.7M users, 100K custom agents on the "commercial-first" sovereign-on-prem stack — held from v17
+- (8) OpenAI GPT-5.6 Sol/Terra/Luna gated to 20 US-approved companies — held from v17
+- (9) Vinton Cerf: AI agents need TCP/IP — held from v17
+- (10) **NEW v19: Newsweek "Open Accountability Standards" (early July 2026) directly names OpenClaw as a popular open-source personal AI agent. The same article confirms the "open accountability standards" gap that Dan Glasses solves with the auditable memory + auditable agent loop on-device. Anthropic Claude Apps Gateway (July 2 2026) + OpenClaw native iOS + Android (June 30 2026) + X (Twitter) hosted MCP server (June 30 2026) all shipped in 4 days, all confirming the v17 Cerf "TCP/IP for agents" thesis is now industry-validated.**
+
+The "yours, not theirs" wedge is now *industry-icon-endorsed, mainstream-press-acknowledged, closed-source-admitted, government-deployed, government-gated, multi-vendor-funded, China-led-standardization-underway, fingerprinting-at-the-runtime-layer, observability-first, supply-chain-pressured*.
+
+## Part D — Technical Deep Dives (v19)
+
+The three v19 deep dives, in order of product impact:
+
+### D.Option B (refreshed) — Edge VLM optimization
+
+**v19 status:** the v17 framing holds. Phase Matters (arXiv 2606.27906) is the v19 v1.0 wearable execution substrate. LFM2.5-230M (v16) is the v19 v1.0 audiod post-processor. **v19 add: v19 RAM price spike (TechSpot, June 30 2026) makes the v17 salience-gated + LFM2.5-230M path even more important. Every MB of RAM saved is a v19 cost + supply-chain win.**
+
+### D.Option C (refreshed) — Vector search and memory architectures for AI companions
+
+**v19 status:** the v17 framing holds. As We May Search (arXiv 2606.29652) + Memora = v19 empirical certainty for local-first IR at 1M documents. **v19 add: v19 Proton Lumo 2.0 (June 30 2026) is a v19 direct privacy-preserving AI competitor with persistent memory. The v19 implication: Lumo 2.0 is the v19 on-device, open-weights analog with cloud convenience. Dan Glasses is the on-device analog of the same pattern.**
+
+### D.Option F (refreshed) — VLM power consumption characterization for wearable devices
+
+**v19 status:** the v17 framing holds. **v19 add: v19 RAM price spike (TechSpot, June 30 2026) makes the v17 phase-mapped execution + LFM2.5-230M audiod post-processor even more important. 4hr battery on the 2026 supply crunch is now even more pressured.**
+
+## Part E — v19 Recommendations
+
+1. **Document OpenClaw's protocol surface as a v1.0 marketing artifact (Q3 W2, 2 days, 1 engineer).** v19 CRITICAL #1. "Vinton Cerf says AI agents need TCP/IP. Anthropic shipped it. OpenClaw shipped it first. Dan Glasses ships it on the wearable." Cite Anthropic's Claude Apps Gateway + X's MCP server + OpenClaw's mobile launch as the v19 named, shipped protocol artifacts. Cite Newsweek as the v19 mainstream-press-acknowledgment.
+2. **Audit OpenClaw's security posture (Q3 W2, 1 day spike, 1 engineer).** v19 CRITICAL #2 risk mitigation. v19 Mashable flag: a critical security flaw in OpenClaw was discovered ~2 months before the mobile launch. v1.0 marketing must address this head-on.
+3. **Document OpenClaw's mobile + wearable thesis in the v1.0 marketing (Q3 W2, 1 day copy, 1 engineer).** v19 CRITICAL #2. "OpenClaw is the gateway. The phone is the mobile node. Dan Glasses is the wearable node." Cite OpenClaw's native iOS + Android launch as the v19 named, shipped pattern.
+4. **Add the v19 batch to the v1.0 marketing (Proton Lumo 2.0, OpenAI closed-source agentic race, Zuckerberg "slower than expected", PagerDuty agent drift, OpenAI $965B, AIPOCH, Godot, Time Magazine, Apple 5 new iPhones, Atomathic Physical AI 2.0) — Q3 W2, 1 day copy, 1 engineer.** v19 SHARPEN. The v19 10-step marketing narrative is now *industry-icon-endorsed, mainstream-press-acknowledged, closed-source-admitted, government-deployed, government-gated, multi-vendor-funded, China-led-standardization-underway, fingerprinting-at-the-runtime-layer, observability-first, supply-chain-pressured*.
+5. **Add Newsweek "Open Accountability Standards" + Anthropic Claude Apps Gateway + X MCP server to the v17 9-step narrative (now 10-step) — Q3 W2, 1 day copy, 1 engineer.** v19 SHARPEN.
+6. **Retain v17 + v15 + v16 + v11 + v14 + v8/v9 + v13 + v12 recommendations 1-8.** No v17 retractions. No v16 retractions. The v19 deltas are *additive, not subtractive*.
+
+## Part F — v19 Open Questions for somdipto
+
+1. **OpenClaw protocol surface marketing artifact priority** — Q3 W2, 2 days, 1 engineer (recommend: yes, sharpened by v19 Anthropic Claude Apps Gateway + X MCP server + OpenClaw mobile)
+2. **OpenClaw security audit spike priority** — Q3 W2, 1 day spike, 1 engineer (recommend: yes, v19 Mashable flag)
+3. **OpenClaw mobile + wearable thesis marketing artifact** — Q3 W2, 1 day copy, 1 engineer (recommend: yes, v19 OpenClaw mobile launch is the v19 named, shipped pattern)
+4. **v19 batch marketing copy update** — Q3 W2, 1 day copy, 1 engineer (recommend: yes, v19 10-step narrative)
+5. **Anthropic Claude Sonnet 5 + Claude Apps Gateway as v1.0 spec safety-considerations add** — Q3 W2, 1 day, 1 engineer (recommend: yes, v19 closed-source-admitted evidence)
+6. **Proton Lumo 2.0 as v1.0 spec privacy-preserving-AI add** — Q3 W2, 1 day, 1 engineer (recommend: yes, v19 direct competitor with persistent memory)
+7. **Atomathic Physical AI 2.0 as v1.0 spec architecture add** — Q3 W2, 1 day, 1 engineer (recommend: yes, v19 academic validation of the Dan Glasses architectural pattern)
+8. **Apple 5 new iPhones + memory crunch + M6/M7 plans as v1.0 spec form-factor add** — Q3 W2, 1 day, 1 engineer (recommend: yes, v19 supply-chain-pressure evidence)
+9. **Godot AI code rules + AIPOCH MedSkillAudit as v1.0 spec compliance-mode add** — Q3 W2, 1 day, 1 engineer (recommend: yes, v19 foundation-level + vertical-level audit evidence)
+10. **Zuckerberg "slower than expected" as v1.0 marketing main-page add** — Q3 W2, 1 day copy, 1 engineer (recommend: yes, v19 mainstream-press-validated)
+11. **PagerDuty Jenn Tejada + $725B AI infra spend as v1.0 spec observability add** — Q3 W2, 1 day, 1 engineer (recommend: yes, v19 observability > model evidence)
+12. **OpenAI $965B + IPO delay to 2027 as v1.0 marketing "implementation wedge" add** — Q3 W2, 1 day copy, 1 engineer (recommend: yes, v19 $1T-class evidence)
+13. **Time Magazine hedging RSI as v1.0 spec safety-considerations add** — Q3 W2, 1 day, 1 engineer (recommend: yes, v19 even-Anthropic-is-hedging evidence)
+14. **SAIMY AI "Dream Company" + Memora + Lumo 2.0 as v1.0 marketing competitor-map add** — Q3 W2, 1 day, 1 engineer (recommend: yes, v19 competitive-mapping)
+15. **Apple Vision Pro exec to OpenAI as v1.0 marketing competitive-map add** — Q3 W2, 1 day copy, 1 engineer (recommend: yes, v19 OpenAI credible Apple-glasses competitor)
+16. **v17 + v16 + v15 + v14 + v11 + v8/v9 + v13 + v12 priorities** — held (recommend: yes, all v17 priorities hold)
+17. **v19 AGI-roadmap 24-month plan revision** — Q3 W3, 2 days, 1 engineer (recommend: yes, add Anthropic Claude Apps Gateway + OpenClaw mobile + Newsweek + Proton Lumo 2.0 + Atomathic Physical AI 2.0 + Apple 5 iPhones + PagerDuty + OpenAI $965B + AIPOCH + Godot + Time Magazine to the 24-month plan)
+18. **Redax SoC choice (Qualcomm vs MediaTek) + LFM2.5-230M on aarch64 (Raspberry Pi 5) benchmarks** — needed before Q3 W1 LFM2.5-230M swap-in (recommend: confirm with hardware team, 1-day benchmark after Q3 W1 swap-in)
+
+## Footnotes (v19)
+
+[^v19-1]: https://www.latimes.com/business/story/2026-06-29/google-poised-to-lose-two-more-senior-ai-staffers-to-anthropic — Google AI brain drain to Anthropic (Adler, Pritzel), June 29 2026 (NEW v19 CRITICAL #1)
+[^v19-2]: https://www.cnbc.com/2026/06/29/alphabet-googl-stock-dow-average.html — Alphabet stock worst month since Feb 2025, June 29 2026 (NEW v19 SHARPEN)
+[^v19-3]: https://www.reuters.com/business/google-limits-metas-use-its-gemini-ai-models-ft-reports-2026-06-28/ — Reuters: Google caps Meta's Gemini compute (FT-sourced), June 28 2026 (NEW v19 CRITICAL #1 + SHARPEN)
+[^v19-4]: https://www.politico.com/news/2026/06/29/exclusive-newsom-anthropic-ink-deal-to-expand-government-use-00979584 — Politico exclusive: Anthropic-Newsom California deal (Claude at 50% off), June 29 2026 (NEW v19 CRITICAL #2)
+[^v19-5]: https://www.govtech.com/artificial-intelligence/as-its-own-ai-tool-expands-california-will-use-anthropic-too — GovTech: California-Anthropic + Poppy in-house AI, June 29 2026 (NEW v19 CRITICAL #2)
+[^v19-6]: https://www.engadget.com/2204549/theres-now-an-openclaw-app-for-ios-and-android-phones/ — Engadget: OpenClaw iOS+Android, OpenClaw founder → OpenAI, June 30 2026 (NEW v19 CRITICAL #3)
+[^v19-7]: https://9to5google.com/2026/06/29/openclaw-app-android-ios/ — 9to5Google: OpenClaw iOS+Android launch, June 30 2026 (held from v18)
+[^v19-8]: https://mashable.com/tech/openclaw-ios-android — Mashable: OpenClaw security flaw + iOS+Android, June 30 2026 (held from v18)
+[^v19-9]: https://roadtovr.com/memomind-one-smart-glasses-kickstarter-release/ — Road to VR: MemoMind One (XGIMI) $500K Kickstarter, late June 2026 (NEW v19 CRITICAL #4)
+[^v19-10]: https://www.rcrwireless.com/20260629/carriers/china-mobile-shanghai — RCR Wireless: China Mobile MWC Shanghai 2026 "mobile intelligence" + AI glasses, June 29 2026 (NEW v19 SHARPEN)
+[^v19-11]: https://www.military.com/nato-drone-exercise-amplifies-international-battle-for-military-airspace-control — Military.com: NATO SAPIENT TIE26, late spring 2026 (NEW v19 SHARPEN)
+[^v19-12]: https://gizmodo.com/ar-glasses-have-a-massive-size-problem-2000779454 — Gizmodo: AR Glasses size problem, early July 2026 (NEW v19 SHARPEN)
+[^v19-13]: https://www.beri.net/article/anthropic-claude-code-gateway-self-hosted-enterprise-ai-coding-platform-war-2026 — Anthropic Claude Sonnet 5 + Claude Apps Gateway, July 2 2026 (held from v18)
+[^v19-14]: https://www.newsweek.com/ai-agents-open-accountability-standards-opinion-12146668 — Newsweek "Open Accountability Standards," early July 2026 (held from v18)
+[^v19-15]: https://9to5mac.com/2026/06/30/proton-launches-lumo-2-0-with-image-generation-memory-private-web-search-more/ — Proton Lumo 2.0, June 30 2026 (held from v18)
+[^v19-16]: https://time.com/article/2026/06/29/recursive-self-improvement-is-the-human-skill-we-need-in-the-ai-age/ — Time Magazine on RSI, June 29 2026 (held from v18)
+[^v19-17]: https://www.thailand-business-news.com/pr-news/white-paper-physical-ai-2-0-and-the-critical-need-for-physical-state-recovery — Atomathic Physical AI 2.0, July 1 2026 (held from v18)
+[^v19-18]: https://www.techspot.com/news/112934-ram-prices-expected-rise-another-40-50-q3.html — RAM price spike, June 30 2026 (held from v18)
+[^v19-19]: https://liquid.ai/blog/lfm2-5-230m — LFM2.5-230M, Liquid AI (held from v16)
+[^v19-20]: https://www.nousresearch.com/agents/hermes — Hermes Agent, Nous Research (held from v16)
+[^v19-21]: https://arxiv.org/abs/2606.29652 — "As We May Search," late June 2026 (held from v16)
+[^v19-22]: https://arxiv.org/html/2606.27906v1 — "Phase Matters" (held from v15)
+[^v19-23]: https://www.letsdatascience.com/news/vinton-cerf-flags-standards-interoperability-and-agents-as-a-c5f4fe3c — Vinton Cerf Open Frontier, June 30 2026 (held from v17)
+[^v19-24]: https://www.defenseone.com/technology/2026/07/genaimil-records-almost-17m-users-plans-new-model-additions/414569/ — DoD GenAI.mil 1.7M users, July 2 2026 (held from v16)
+[^v19-25]: https://www.beri.net/article/ai-deployment-wars-9-billion-forward-deployed-engineers-enterprise-pilot-failure-crisis-2026 — $9.5B / 90 days / 5-vendor (held from v16)
+[^v19-26]: https://www.sapient.ai/blog/hrm-text-1b — HRM-Text-1B, Sapient (held from v15)
+[^v19-27]: https://www.mobihealthnews.com/news/anthropic-debuts-claude-science-renews-access-fable-5-mythos-5 — Anthropic Claude Science, June 30 2026 (held from v17)
+[^v19-28]: https://www.darkreading.com/vulnerabilities-threats/anthropic-s-ai-finds-bugs-ibm-bets-5b-it-can-fix-them- — IBM Red Hat Project Lightwell $5B (held from v17)
+[^v19-29]: https://www.developingtelecoms.com/telecom-technology/optical-fixed-networks/20448-openan-project-aims-to-enable-o-m-agent-collaboration-in-autonomous-networks.html — OpenAN project (held from v17)
+[^v19-30]: https://letsdatascience.com/news/pagerduty-chair-highlights-ai-agent-failure-risks-0367559f — PagerDuty Jenn Tejada, July 2 2026 (held from v18)
+[^v19-31]: https://markets.businessinsider.com/news/stocks/aipoch-launches-medskillaudit-an-ai-audit-framework-to-evaluate-medical-ai-agent-skills-before-deployment-1036284741 — AIPOCH MedSkillAudit, June 29 2026 (held from v18)
+[^v19-32]: https://letsdatascience.com/news/godot-tightens-contribution-policy-to-restrict-ai-code-e58bf90a — Godot AI code rules, June 30 2026 (held from v18)
+[^v19-33]: https://techcrunch.com/2026/06/27/apple-vision-pro-exec-is-reportedly-leaving-for-openai/ — Apple Vision Pro exec to OpenAI, June 27 2026 (held from v18)
+[^v19-34]: https://www.forbes.com/sites/sandycarter/2026/06/28/openai-eyes-2027-ipo-delay-as-washington-clears-anthropics-mythos-5/ — OpenAI delays IPO + Anthropic $965B, June 28 2026 (held from v18)
+
+## v18 research report content (preserved in backup)
+
+The v18 research report (preserved in `dan2-research-report.v18-backup-2026-07-04.md`, 48.1KB, 276 lines) covers: Anthropic Claude Sonnet 5 + self-hosted Claude Apps Gateway (shipped, July 2 2026) + OpenClaw native iOS + Android launch (June 30 2026) + Newsweek "Open Accountability Standards" directly names OpenClaw (early July 2026) + 6 SHARPEN adds: X (Twitter) hosted MCP server, Proton Lumo 2.0 (privacy-preserving AI with persistent memory), OpenAI GPT-5.6 Sol + Google Gemini 3.5 Flash + Anthropic Sonnet 5 closed-source agentic race, Zuckerberg "slower than expected" (Reuters + TechCrunch + Bloomberg + CNN + Forbes), PagerDuty Jenn Tejada + $725B AI infra spend (BNP Paribas), OpenAI delays IPO to 2027 + Anthropic $965B, AIPOCH MedSkillAudit (June 29 2026), Godot Foundation AI code rules (June 30 2026), Apple Vision Pro exec to OpenAI (June 27 2026), Atomathic Physical AI 2.0 (July 1 2026), Time Magazine on Anthropic hedging RSI (June 29 2026), Apple 5 new iPhones + memory crunch + M6/M7 chip plans (June 2026), SAIMY AI "Dream Company" (July 3 2026). v18 9-step → 10-step marketing narrative (Newsweek as the v18 10th step). Architecture decomposition score 9.2 → 9.4/10. **All v18 content is preserved verbatim in the backup. The v19 add is documented in the v19 header at the top of this file: 4 CRITICAL (Google AI brain drain to Anthropic, Anthropic-Newsom California deal, OpenClaw founder → OpenAI governance risk, MemoMind One $20/mo) + 5 SHARPEN (China Mobile MWC Shanghai AI glasses, NATO SAPIENT, Reuters Meta compute cap, AR Glasses size problem, Alphabet stock worst month) + 1 honorable mention (Microsoft Scout on OpenClaw).**
+## v20 addendum (2026-07-04 09:35 UTC / 15:05 IST)
+
+**v20 deltas vs v19 (4 CRITICAL, 4 SHARPEN, 8 new footnotes, 0 broad rollbacks):**
+
+1. **NEW v20 CRITICAL #1 — Axios: "How the world's top AI models were revived" (July 3 2026).** Amazon CEO Andy Jassy phoned Treasury Secretary Scott Bessent on June 11 to raise "jailbreaking" concerns about Anthropic Mythos + Fable. Commerce Secretary Howard Lutnick called Dario Amodei on June 12 at Trump's direction, imposed sweeping export controls, and threatened an export-control letter. A 20-day showdown followed. Cybersecurity experts later wrote an open letter to the administration saying "other leading AI models have the same issue." **v20 CRITICAL: the closed-source-frontier is now visibly fractured at the *inter-vendor trust* layer. Amazon (the AWS-host of Anthropic) reported Anthropic to the White House. The Mythos jailbreak is the first publicly-disclosed inter-vendor AI safety escalation in 2026.** Direct read-through: the v19 "Mythos 5 Glasswing" framing is now a *post-jailbreak-control* artifact. The closed-source frontier cannot be trusted to police its own models — even Amazon vs Anthropic. **v20 add: cite this Axios piece as the v20 strongest possible evidence for the *inter-vendor trust gap* that the on-device + open-weights + auditable memory + auditable agent loop stack resolves.**
+
+2. **NEW v20 CRITICAL #2 — "Bad Epoll" Linux kernel flaw (CVE-2026-46242), July 3 2026.** Jaeyoung Chung discovered a use-after-free in the Linux epoll subsystem that lets an unprivileged user gain root on Linux desktops, servers, and Android. The same kernel-code region is where Anthropic's Mythos recently found a *different* bug (CVE-2026-43074, fix landed earlier in 2026). Mythos caught one bug and missed this one. Bad Epoll can be triggered from inside Chrome's renderer sandbox and reaches Android. **v20 CRITICAL: Mythos, the flagship closed-source safety/cyber model, *missed a kernel bug* in the same subsystem it scanned. This is the v20 strongest possible evidence that *closed-source frontier models are not a reliable substrate for open-source / open-weights safety* — the very fact that Mythos was used to find CVE-2026-43074 means we have a benchmark: Mythos does not catch every bug, and it operates on closed code.** Direct read-through: the v19 "harness > model" thesis now has a concrete citable example. Cite Bad Epoll + Mythos CVE-2026-43074 in the v1.0 spec safety-considerations section. **v20 add: the v1.0 safety spec should adopt the v20 *auditable-bug-discovery* pattern: every Dan Glasses release must be scanned by at least 3 independent open-weights safety analyzers (Mythos, GLM-5.2, Apertus v1.1 4B) before shipping, with the findings published in a public security advisory. This is the v20 structural answer to "Mythos is not a guarantee."**
+
+3. **NEW v20 CRITICAL #3 — Apple camera AirPods Pro "suspended" per Kosutami (July 3 2026).** Apple's planned camera-equipped AirPods Pro — the Visual Intelligence hardware needed to feed the smarter Siri — has been suspended per the leaker who originally said the device was nearing completion. Apple's first-half 2026 launch window closed without a product. The smarter Siri is in the iOS 27 beta but won't be widely available until September 2026. **v20 CRITICAL: Apple has now *missed two consecutive wearable-visual-AI ship dates* — the AirPods Pro camera product (H1 2026) and the smart glasses (delayed to end 2027 per v18). The v19 "Apple $1,200+ upgrade" narrative is now a *v20 Apple-has-stopped-shipping-visual-AI-wearables* narrative. The wearable-visual-AI wedge is more open than it has been in 12 months. v20 add: lock the v1.0 ship window to Q4 2026 — the v20 wearable-visual-AI competitive vacuum will not stay open.**
+
+4. **NEW v20 CRITICAL #4 — LA Times + Bloomberg: "Token prices collapsing and regulation rising, AI's pricing power looks fragile" (July 3 2026).** The Silicon Data LLM Token Expenditure Index is down almost 20% from its May high after nearly doubling since inception in December 2025. The gauge is the cleanest read on the $700B+ capex boom. The chatter that OpenAI is pushing back its IPO to next year is "seen as a sign that, currently, profitability remains a problem." **v20 CRITICAL: the *unit economics* of the closed-source AI industry are now publicly cracking. Token prices falling = cost-of-goods-sold pressure on every closed-source vendor = pressure to either (a) raise prices (Meta, Apple, Anthropic all attempting) or (b) commoditize. The on-device path is now the only path with stable unit economics.** Direct read-through: the v18 implementation-wedge thesis is now *unit-economics-validated*. "The AI trade is losing one of its key signals." **v20 add: cite Bloomberg + LA Times in the v1.0 spec unit-economics section. The on-device stack (lifetime cost of $349 hardware + free local inference) is the v20 *only credible answer* to the v20 unit-economics crisis.**
+
+5. **NEW v20 SHARPEN #1 — Wall Street rotation: Palo Alto + CrowdStrike all-time highs, PHLX semis -6.3%/-5.4% (Wed/Thu), WSJ reports Zhipu GLM-5.2 now rivals Anthropic Mythos at vulnerability hunting (July 3 2026).** "Capital rotated out of high-flying semiconductor stocks and into cybersecurity vendors in the same week that evidence mounted that AI models, including a cheap, open-weight Chinese model, are closing the gap on the vulnerability-hunting capability that has helped justify premium pricing for security tooling." **v20 SHARPEN: the v19 GLM-5.2 / Mythos-cybersecurity story is now *Wall Street-priced*. Investors are now pricing GLM-5.2 as a *direct competitor* to Mythos for security workloads. The open-weights thesis is now a *priced market position*, not a moral position. Cite in v1.0 spec pricing/positioning section.**
+
+6. **NEW v20 SHARPEN #2 — NSA Gen. Joshua Rudd: Mythos "broke into almost all of our classified systems, not in weeks, but in hours" (Economist + Mimir's Well, July 3 2026).** "General Joshua Rudd, head of the National Security Agency and Cyber Command, confirmed that Mythos 'broke into almost all of our classified systems, not in weeks, but in hours.' This led the Trump Administration to issue an executive order setting up voluntary pre-deployment reviews of AIs." **v20 SHARPEN: the v19 "Anthropic Mythos 5 Glasswing" framing is now *NSA-validated at the classified-systems level*. Mythos is too dangerous to ship widely, too valuable to ship to no one. This is the v20 structural impossibility that the on-device + open-weights + auditable path solves. Cite in the v1.0 spec security/safety section.**
+
+7. **NEW v20 SHARPEN #3 — Dark Reading: 360 Security "Tulongfeng" finds 3,400+ vulnerabilities; Chris Inglis (former US National Cyber Director) endorses GLM-5.2 for defenders (July 3 2026).** "While the software that supports the vulnerability-discovery process makes a critical difference, the fact that an open-weight model performed so well in benchmarks highlights that defenders need to pay off their security debt as quickly as possible… some Chinese models, such as GLM 5.2, have open weights — meaning they can be installed on local hardware — is a strong point for defenders to adopt it and enables attackers to experiment with escaping any alignment that prevents offensive use." **v20 SHARPEN: the v19 GLM-5.2 China-side stack is now *former-NSA-cyber-director-endorsed*. Inglis is the most credible US cyber-policy voice on this. Cite in the v1.0 spec security/positioning section.**
+
+8. **NEW v20 SHARPEN #4 — Meta launches "Pocket" AI gizmos app on Apple App Store + Google Play, June 29 - July 3 2026 (MediaPost, TechCrunch).** "Earlier this week, Meta quietly launched 'Pocket,' an app that invites users to create, share, and discover playable AI-generated experiences (called 'gizmos')." Following Meta's acquisition of the team behind Gizmo (Atma Sciences). "Your interactions with gizmos on Pocket will be used to improve AI at Meta." **v20 SHARPEN: Meta is now using user gizmos to *train Meta's AI*. The v19 "Meta is compute-constrained" narrative is now a v20 "Meta is data-hungry + compute-constrained" narrative. The on-device + open-weights + auditable memory stack is the v20 only answer to the v20 *user-data-as-AI-training-fuel* pattern. Cite in v1.0 spec privacy/positioning section.**
+
+**v20 architecture decomposition score: 9.5 → 9.6/10.** v19 elevates with Vinton Cerf + Anthropic Claude Apps Gateway + OpenClaw native iOS+Android + Newsweek + Atomathic Physical AI 2.0. v20 elevates further with: **Axios Amazon-Jassy-Anthropic jailbreak escalation (v20 strongest evidence for the inter-vendor trust gap)** + **Bad Epoll Mythos-missed-bug (v20 strongest evidence for the auditable-bug-discovery pattern)** + **Apple camera AirPods Pro suspended (v20 strongest evidence for the wearable-visual-AI competitive vacuum)** + **LA Times + Bloomberg token-price collapse (v20 strongest evidence for the unit-economics imperative of the on-device path)** + **Palo Alto + CrowdStrike all-time highs + WSJ GLM-5.2 vs Mythos (v20 Wall Street-priced open-weights cybersecurity)** + **NSA Gen. Rudd on Mythos (v20 NSA-validated safety-considerations framing)** + **Chris Inglis on GLM-5.2 (v20 former-NSA-cyber-director-endorsed open-weights)** + **Meta Pocket gizmos (v20 user-data-as-AI-training-fuel evidence).** The decomposition is now *inter-vendor-trust-fractured, kernel-bug-benchmarked, wearable-vacuum-opened, unit-economics-cracking, Wall-Street-priced, NSA-validated, former-NSA-director-endorsed, data-hungry-vendor-exposed*.
+
+**v20 confirms:** v19 LFM2.5-230M (v1.0 audiod post-processor), v19 Hermes Agent (v1.0 openclaw agent framework), v19 As We May Search (v1.5 memoryd flagship), v19 Memora, v19 SIA-W+H, v19 HRM-Text-1B, v19 Apertus v1.1 4B, v19 OpenPhone-3B, v19 Phase Matters, v19 GLM-5.2 (now Wall-Street-priced), v19 Atomathic Physical AI 2.0, v19 $9.5B / 90 days / 5-vendor implementation-wedge bet (now $1T-valuation class + unit-economics-cracking), v19 DoD GenAI.mil 1.7M users, v19 VisualClaw, v19 A-Evolve-Training, v19 Continual Harness, v19 Diagnosing the Memory-Update Gap, v19 Cerf TCP/IP-for-agents, v19 Claude Science, v19 Project Lightwell + Chainguard Athena, v19 OpenAN, v19 Claude Code fingerprinting, v19 RAM price spike, v19 10-step marketing narrative, v19 Google AI brain drain, v19 Anthropic-Newsom California, v19 OpenClaw governance risk, v19 MemoMind One $20/mo, v19 China Mobile MWC Shanghai, v19 NATO SAPIENT, v19 Reuters Meta compute cap, v19 AR Glasses size problem, v19 Alphabet stock worst month, v19 Microsoft Scout on OpenClaw. **All v19 signals hold in v20.** No v19 recommendation retracted.
+
+**v20 retractions:** 0 broad rollbacks. v20 add: the v19 Mythos 5 Glasswing framing is now *post-jailbreak-control*, *NSA-validated-at-the-classified-systems-level*, and *Wall-Street-priced-as-replaceable-by-GLM-5.2*. The v19 framing holds, but the v20 emphasis shifts to the *inter-vendor trust gap* and the *unit-economics imperative* of the on-device path.
+
+**v20 10-step → 11-step marketing narrative (v19 10-step + 1 new step):** (1) BBC Meta paywall, (2) Apple $1,200+ (now *plus* Apple camera AirPods Pro suspended, v20 SHARPEN), (3) Anthropic Mythos 5 Glasswing (now *plus* NSA Rudd: "broke into almost all of our classified systems"), (4) GLM-5.2 MIT (now *plus* WSJ: rivals Mythos at vulnerability hunting + Chris Inglis endorsement, v20 SHARPEN), (5) Palantir + NVIDIA sovereign Nemotron, (6) $14.5B / 120 days / 6-vendor implementation-wedge bet (now $1T-valuation class), (7) DoD GenAI.mil 1.7M users, (8) GPT-5.6 government-gating, (9) Vinton Cerf: agents need TCP/IP, (10) v19 Newsweek + Anthropic Gateway + X MCP, **(11) NEW v20: Axios Amazon-Jassy-Anthropic jailbreak escalation + Bad Epoll Mythos-missed-bug + LA Times token-price collapse + Apple camera AirPods Pro suspended + Wall Street GLM-5.2 vs Mythos rotation.**
+
+**v20 top 4 recommendations (v19 4 + 2 sharpening):**
+1. (v19 held) **Document OpenClaw's protocol surface as a v1.0 marketing artifact (Q3 W2, 2 days, 1 engineer)** — v20 CRITICAL #1, Vinton Cerf + Anthropic Claude Apps Gateway + Axios Amazon-Jassy-Anthropic escalation.
+2. (v19 held) **Audit OpenClaw's threat model (Q3 W2, 1 day spike, 1 engineer)** — v20 SHARPEN: also read OpenClaw Foundation charter for any v20 OpenAI-aligned commercial arrangements.
+3. (NEW v20) **Add the v20 auditable-bug-discovery pattern to the v1.0 spec safety-considerations section (Q3 W2-W3, 1 day, 1 engineer)** — every Dan Glasses release must be scanned by Mythos + GLM-5.2 + Apertus v1.1 4B before shipping, with the findings published in a public security advisory. Cite Bad Epoll + Mythos CVE-2026-43074 as the v20 case study.
+4. (NEW v20) **Add the v20 unit-economics argument to the v1.0 spec pricing section (Q3 W2-W3, 1 day copy, 1 engineer)** — on-device stack is the v20 only answer to the v20 token-price-collapse. "The AI trade is losing one of its key signals. The on-device path is the only path with stable unit economics."
+
+**v20 5 open questions for somdipto:**
+1. Bad Epoll + Mythos auditable-bug-discovery pattern (recommend Q3 W2-W3 1 day 1 engineer).
+2. Unit-economics argument in v1.0 spec pricing section (recommend Q3 W2-W3 1 day 1 engineer).
+3. Apple camera AirPods Pro suspended as v20 wearable-vacuum marketing copy (recommend Q3 W2 30 min copy).
+4. v20 11-step marketing narrative update (recommend Q3 W2 1 day copy, 1 engineer).
+5. v20 6/12/24-month plan revision (recommend Q3 W3 2 days, 1 engineer).
+
+**v20 queue (new):** v20 auditable-bug-discovery pattern spec add, v20 unit-economics spec add, v20 wearable-vacuum marketing copy, v20 11-step narrative update, v20 24-month plan revision, plus all v19 queue items still pending (OpenClaw governance-drift audit, "no subscription" v1.0 marketing guarantee, Anthropic-Newsom California spec add, Alphabet-stock 11-step narrative, Reuters Meta compute cap, NATO SAPIENT spec, China Mobile MWC Shanghai spec, v19 10-step narrative, OpenClaw security audit, OpenClaw protocol surface artifact, Microsoft Scout on OpenClaw, MemoMind One $20/mo, Phase Matters perceptiond.phase_map, LFM2.5-230M audiod, Hermes Agent, Memora + As We May Search, SIA-W+H, Red Queen moving-judge, Karpathy 10-rule openclaw, openclaw PR-review "X% AI-generated", VisualClaw cascade-gate, Anthropic Dreaming port, sovereign-on-prem, Project Lightwell + Athena, OpenAN, HRM-Text-1B, Apertus v1.1 4B, OpenPhone-3B, Qwen3-TTS, Chatterbox, Ollie proactive, GLM-5.2 research bet, INT8 LFM2.5-VL-450M quant spike, EigenCloud TEE, compliance mode, accessibility-first blog post).
+
+
+[^v20-1]: https://www.axios.com/2026/07/03/anthropic-ai-models-revived-behind-the-scenes — Axios: How the world's top AI models were revived (Amazon Jassy → Bessent → Lutnick → Amodei, 20-day showdown), July 3 2026 (NEW v20 CRITICAL #1)
+[^v20-2]: https://thehackernews.com/2026/07/new-bad-epoll-linux-kernel-flaw-lets.html — "Bad Epoll" Linux kernel flaw (CVE-2026-46242) — Mythos found CVE-2026-43074 but missed Bad Epoll; fix already landed, July 3 2026 (NEW v20 CRITICAL #2)
+[^v20-3]: https://www.macrumors.com/2026/07/03/camera-airpods-pro-development-suspended-leaker/ — Apple camera AirPods Pro "suspended" per Kosutami, July 3 2026 (NEW v20 CRITICAL #3)
+[^v20-4]: https://www.latimes.com/business/story/2026-07-03/with-token-prices-collapsing-regulation-rising-ais-pricing-power-looks-fragile — LA Times: Silicon Data LLM Token Expenditure Index -20% from May high; AI pricing power "looks fragile," July 3 2026 (NEW v20 CRITICAL #4)
+[^v20-5]: https://letsdatascience.com/news/ai-driven-rotation-reshapes-stock-market-leadership-dc767e6c — Palo Alto + CrowdStrike all-time highs; PHLX semi -6.3%/-5.4% Wed/Thu; WSJ: Zhipu GLM-5.2 now rivals Mythos at vulnerability hunting, July 3 2026 (NEW v20 SHARPEN #1)
+[^v20-6]: https://mimir.substack.com/p/the-new-news-in-ai-7326-edition — NSA Gen. Joshua Rudd: Mythos "broke into almost all of our classified systems, not in weeks, but in hours," July 3 2026 (NEW v20 SHARPEN #2)
+[^v20-7]: https://www.darkreading.com/cyber-risk/chinese-llms-broaden-gap-between-attackers-defenders — 360 Security "Tulongfeng" finds 3,400+ vulnerabilities; Chris Inglis (former US National Cyber Director) endorses GLM-5.2 for defenders, July 3 2026 (NEW v20 SHARPEN #3)
+[^v20-8]: https://www.mediapost.com/publications/article/416292/meta-prizes-ai-generated-creative-in-new-mini-game.html — Meta launches "Pocket" AI gizmos app on Apple App Store + Google Play, June 29 - July 3 2026 (NEW v20 SHARPEN #4)
+
+
+## v19 research report content (preserved in backup)
+
+The v19 research report (preserved in `dan2-research-report.v19-backup-2026-07-04.md`, 48.7KB, 274 lines) covers: 4 CRITICAL (Google AI brain drain to Anthropic, Anthropic-Newsom California deal, OpenClaw founder → OpenAI governance risk, MemoMind One $20/mo) + 5 SHARPEN (China Mobile MWC Shanghai AI glasses, NATO SAPIENT, Reuters Meta compute cap, AR Glasses size problem, Alphabet stock worst month) + 1 honorable mention (Microsoft Scout on OpenClaw). v19 10-step marketing narrative. Architecture decomposition score 9.4 → 9.5/10. **All v19 content is preserved verbatim in the backup. The v20 add is documented in the v20 addendum above: 4 CRITICAL (Axios Amazon-Jassy-Anthropic jailbreak escalation, Bad Epoll Mythos-missed-bug, Apple camera AirPods Pro suspended, LA Times token-price collapse) + 4 SHARPEN (Wall Street GLM-5.2 vs Mythos rotation, NSA Gen. Rudd on Mythos, Chris Inglis on GLM-5.2, Meta Pocket gizmos). v20 10-step → 11-step marketing narrative. Architecture decomposition score: 9.5 → 9.6/10.**

@@ -1,0 +1,16 @@
+// v9.0 — bbox overlay: server paints them by default on /frames/<id>.jpg,
+// client only adds a small SVG overlay with labels (the rectangles are
+// already on the JPEG, so the SVG just adds the type badges).
+function BoundingBoxes({
+  boxes,
+  width,
+  height,
+}: {
+  boxes: { x: number; y: number; w: number; h: number; kind: string }[];
+  width: number;
+  height: number;
+}) {
+  if (!boxes || boxes.length === 0) return null;
+  // The server already drew the rectangles; this is a noop for clarity.
+  return null;
+}
