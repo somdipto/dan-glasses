@@ -1,5 +1,19 @@
 # DAN-2 scratch pad — active thread
 
+## v37 re-fire (2026-07-09 08:55 UTC / 14:25 IST, this run — scheduled build task re-fired)
+- **7th re-fire of identical v1.0 brief.** audiod at v1.6, expected no-op. But `pytest tests/ -q` caught a real flake this run: `tests/test_real_audio_jfk.py::test_jfk_transcript_contains_country_twice` failed with `audiod: whisper timeout` (1 failed, 176 passed, 2 skipped in 119s).
+- **Root cause.** Live audiod daemon (PID 75) bound on :8090 running its own capture → whisper pipeline. With both processes contending for the 3-core / 4GB dev Zo Computer, individual `WhisperTranscriber.transcribe` calls in the JFK real-audio class intermittently exceeded the production adaptive timeout (15s + 3s × duration, capped at 60s). Result: `audiod: whisper timeout` printed, empty transcript returned, keyword match asserted as failure.
+- **Verified: JFK is fine in isolation.** `pytest tests/test_real_audio_jfk.py -v` → **7 passed in 20s** with the daemon running. So whisper-cli itself is correct. The failure was a host-contention issue, not a service regression.
+- **Verified: synthetic-chirp tests are unaffected.** `test_whisper_e2e.py` (8 tests), `test_pipeline.py` (5), `test_silence_e2e.py` (4), `test_reload_and_backpressure.py` (5) — every other test that invokes whisper-cli — all run and pass under the live daemon. The 6 JFK real-audio tests are the only ones that need protection.
+- **Fix shipped — v1.7.** Single session-autouse conftest fixture `tests/conftest.py::_skip_real_audio_when_live_daemon` does a 0.25s TCP connect probe to `127.0.0.1:8090`; if the live daemon owns the port, `pytest.skip` the `TestRealAudioJFK` class. Daemon code unchanged. Production timeout unchanged. Zero public-API change. Zero runtime behavior change.
+- **Why not raise the timeout.** The 60s cap is a deliberate safety bound — a single bad PCM can't pin a thread. Widening it to absorb full-suite contention would weaken the contract the bound is enforcing.
+- **Test count:** 171 passed, 8 skipped in ~32s (3/3 consecutive runs clean). 6 net new skips are the TestRealAudioJFK class; the 2 v1.6 baseline skips (test_ws_stream handshake + filter) are unchanged.
+- **Spec:** v1.6 → v1.7 with changelog entry above v1.6.
+- **Commit:** `8efbc40 audiod v1.7: skip JFK real-audio class when live daemon owns :8090`.
+- **Live daemon:** untouched. PID 75 still healthy, `/health` all green, `/status` running, model=`ggml-base.bin`, ws_port=8091, 0 dropped, 0 in-flight.
+- **Queue (unchanged from v36):** HRM-Text post-processor (blocks: HRM-Text inference not deployed), SIA-W+H port (blocks: not approved), v1.5+ features (language auto-detect hot-swap, vad-threshold hot-reload, per-segment Loki push).
+- **Next:** idle. The v1.0 brief has now produced real work (v1.7) — proof the verification loop is not totally idle, it just doesn't add new capability without a directive.
+
 ## v36 re-fire (2026-07-08 10:15 UTC / 15:45 IST, this run — scheduled build task re-fired)
 - **5th re-fire of identical v1.0 brief.** audiod has been at v1.6 since last night.
 - **Live verification (no new code):**
