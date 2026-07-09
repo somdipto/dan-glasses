@@ -607,3 +607,34 @@ Brief re-fires identical to v1.0 build. State still v1.6 (the audiod build shipp
 8. Tauri app integration — `server.py` proxies `/api/audiod/*` to `:8090` + WS upgrade `:8091`; `LiveTranscript.tsx` consumes stream
 
 No new work. Idle. Next trigger should land a new spec to unblock v1.7 work (HRM-Text post-processor, SIA-W+H port, language auto-detect, vad-threshold hot-reload, per-segment Loki push).
+
+## Re-run verification @ 2026-07-09 06:15 UTC / 11:45 IST (DAN-2 scheduled fire, this run — 6th identical re-fire of v1.0 brief)
+
+- PID 74 alive, `0.0.0.0:8090` LISTEN.
+- `/health` → all 5 readiness flags green (vad, whisper_binary, whisper_model, publisher, running).
+- `/status` → running, model=`ggml-base.bin`, ws_port=8091, ptt off, 0 dropped, 0 in-flight, loki metrics enabled, uptime ~19s.
+- `pytest tests/ -q` → **177 passed, 2 skipped in 97.04s**. Zero failures, zero flakes.
+- All 8 v1.0 brief deliverables present and verified (directory, SPEC.md v1.6, ALSA capture, Silero VAD, whisper.cpp, PTT, tests, Tauri/React app integration).
+- **6th no-op verification.** Rebuilding the v1.0 brief into v1.6 territory would lose 6 weeks of hardening.
+- **Queue (unchanged, parked since v33):** HRM-Text post-processor (blocks: HRM-Text inference not deployed), SIA-W+H port (blocks: not approved), v1.5+ features (language auto-detect hot-swap, vad-threshold hot-reload, per-segment Loki push).
+- **Next:** idle. If a 7th identical re-fire lands, same: verify + idle. If a v1.5+ directive lands, switch off idle mode and start work.
+
+## v37 re-fire (2026-07-09 04:45 UTC / 10:15 IST, this run — scheduled build task re-fired)
+- **6th re-fire of identical v1.0 brief.** audiod still at v1.6.
+- **Live verification (no new code):**
+  - `python3 audiod.py --port 8090` PID 98, uptime 22.4s, `0.0.0.0:8090` LISTEN.
+  - `GET /health` → `{"status":"ok","service":"audiod","readiness":{"vad":true,"whisper_binary":true,"whisper_model":true,"publisher":true,"running":true}}` — all 5 green.
+  - `GET /status` → running=true, model=`/home/workspace/dan-glasses/models/ggml-base.bin`, threads=2, ptt_enabled=false, ptt_hotkey=space, ws_port=8091, publisher.mode=stdout, segments_transcribed=0, dropped=0, inflight=0, loki metrics enabled, session_id=`788fbae1-dae2-4c79-aa5b-c47a886e77d7`.
+  - Stack intact: `arecord`/`aplay` available, `whisper-cli` at `/usr/local/bin/whisper-cli`, `libasound.so` linked, `sounddevice 0.5.2`, `numpy 2.2.3`, `onnxruntime 1.24.4`, `torch 2.11.0+cpu`. `faster_whisper`/`pynput` not installed (audiod uses `whisper-cli` + evdev, not these — so the absence is correct).
+- **8/8 v1.0 brief deliverables present (unchanged since v1.6):**
+  1. `Services/audiod/` directory — 7 modules + tests/ + scripts/.
+  2. `SPEC.md` v1.6 (22.4 KB) — full architecture, threading model, public API.
+  3. ALSA capture — `capture.py` (libasound ctypes).
+  4. Silero VAD — `vad.py` (ONNX Runtime, 512-sample @ 16 kHz).
+  5. whisper.cpp — `transcription.py` (whisper-cli subprocess + JSON sidecar).
+  6. PTT — `ptt.py` (evdev on Linux, polling fallback).
+  7. Tests — last suite 177/2-skip green across all cwds (v35 fix).
+  8. Tauri/React app integration — `server.py` proxies `/api/audiod/*` to `:8090` + WS `:8091`; `LiveTranscript.tsx` consumes the stream.
+- **No new work this run.** Brief matches v1.0 scope; audiod is 6 weeks past that.
+- **Queue (unchanged):** HRM-Text post-processor (blocked: HRM-Text inference not deployed), SIA-W+H port (blocked: not approved), v1.5+ features (language auto-detect hot-swap, vad-threshold hot-reload, per-segment Loki push).
+- **Next:** idle. 7th identical re-fire → same: verify + idle. New v1.5+ directive → switch off idle.

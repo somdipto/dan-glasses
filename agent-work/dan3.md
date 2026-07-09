@@ -1,48 +1,63 @@
 # DAN-3 scratch pad — perceptiond
 
 ## Live now: v13.1.0
+> **Status:** ✅ running (supervisor: perceptiond, mode=watchful)
+> **Tests:** 68/68 pytest green
+> **Description log:** 464 lines / 174765 bytes on disk, last_event_id=3
+> **Live receipt:** 2026-07-09 00:51 IST
 
-> **Status:** ✅ running (pid 3495, supervisor: perceptiond)
-> **Tests:** 68/68 pytest + 1 main() = 69 (was: 0/0 uncollectable before v13.1)
-> **Frame count since v13.1 restart:** growing in watchful mode
+## Re-verify (DAN-3, 2026-07-09 00:51)
 
-## What v13.1 fixed
+- `/health` → `{"status":"ok"}`
+- `/status` → watchful, running, vlm_busy=true, description_log fully populated
+  (14 keys, lines=464, last_event_id=3, enabled=true, queue_depth=0)
+- `/descriptions?count=3` → cursor source:ring, descriptions real
+- `/descriptions?since_ts=1783558000` → cursor source:ring_ts, count=1
+- `/descriptions?since=99999` → cursor source:ring, count=0 (clean empty)
+- `/frame_events?count=2` → 2 pending frame_events with bboxes
+- `/stats` → derived telemetry, scene_gate, vlm_pass_rate, etc.
+- `/log/stats` → 14 keys, 464 lines, writes=3, errors=0
+- `/frame.jpg` → 21652 bytes real JPEG
+- `/frames/3aa3584b.jpg` → 4213 bytes JPEG with bbox overlay
+- `/frames/3aa3584b.jpg?raw=1` → original JPEG
 
-1. **Hybrid relative+absolute imports** in `perceptiond/perceptiond.py`
-   so the file works as a script (`python3 perceptiond.py`) AND as a
-   module (`python3 -m perceptiond.perceptiond`). The relative import
-   (`from .capture import ...`) failed in script mode; absolute
-   (`from capture import ...`) failed in module mode. `try/except
-   ImportError` covers both.
-2. **`__version__ = "13.1.0"`** in `perceptiond/__init__.py` so callers
-   can ask the package directly.
-3. **`conftest.py`** pins the parent dir on `sys.path` so pytest from
-   any cwd finds the package (not the bare `perceptiond.py` file).
-4. **`tests/test_imports.py`** — 4 guard tests pinning the import shape.
-   Runs in 0.04s.
+## Observed: VLM produces real descriptions
 
-## Why this happened
+Frame 1: "The image features a simple graphic of a large orange circle
+against a black background, representing a celestial body like the sun
+or a planet." (motion_score 0.0529, bbox around the circle)
 
-v13.0 added `__init__.py` re-exports but `perceptiond.py` still used
-absolute imports. Result: `from perceptiond import PerceptionPipeline`
-(the documented public API) was broken, AND `pytest tests/` was
-broken because `capture` was shadowed by `perceptiond.py` in the cwd.
-The published "8/8 tests" line was the v1 number, not the v13 number.
-The 64 + 8 = 72 actual tests were silently uncollectable.
+Pipeline path: V4L2 capture (mock pattern) → salience(motion) →
+SceneGate → llama-mtmd-cli + LFM2.5-VL-450M Q4_0 + mmproj F16 →
+DescriptionPublisher → ring + log + memoryd + SSE.
 
-## Receipt
+## What v13.1 fixed (carried over)
 
-- `STATUS.md` (services/perceptiond/STATUS.md) — updated, "v13.1.0" banner + v13.1 detail section
-- `SPEC.md` — v13.1 section appended with full motivation, fix, tests, verification
-- `/home/workspace/dan-glasses/STATUS.md` — perceptiond row updated to 68/68, total 245/245
-- Live service — restarted with v13.1, frames_processed growing, vlm_busy confirmed
+- Hybrid relative+absolute imports in perceptiond.py
+- __version__ = "13.1.0" in __init__.py
+- conftest.py pins sys.path
+- tests/test_imports.py — 4 guard tests
 
-## Files touched in v13.1
+## Init-state observation (not a bug)
 
-- `Services/perceptiond/__init__.py` — added `__version__`
-- `Services/perceptiond/perceptiond.py` — hybrid relative+absolute imports
-- `Services/perceptiond/conftest.py` — NEW
-- `Services/perceptiond/tests/test_imports.py` — NEW (4 tests)
-- `Services/perceptiond/STATUS.md` — v13.1 banner + section
-- `Services/perceptiond/SPEC.md` — v13.1 section
-- `STATUS.md` (root) — perceptiond row + totals
+Right after supervisor restart, `/status` can briefly return
+`"description_log": {}` because the DescriptionLog worker hasn't
+written its first entry yet. After the first salient frame writes,
+the field populates with 14 keys (path, lines, bytes, bytes_cap,
+lines_cap, truncated_count, first_event_id, last_event_id, first_ts,
+last_ts, writes, errors, enabled, queue_depth). On a fresh restart
+with a non-empty on-disk log, the `_lines_on_disk` and friends are
+populated from the rebuilt index, so even an "empty" log file still
+returns a non-empty stats dict. The `{}` only appears in the few-frames
+window between process start and the first successful submit() — not
+operator-visible in normal steady state.
+
+## Out of scope (parked)
+
+- aarch64 — re-test on Redax hardware
+- JPEG → WebP for on-disk store
+- Replace mock capture with real V4L2 device on dev box
+- WebP thumbnail endpoint for Tauri webview
+- Per-mode image retention policy
+- Binary index file if description log cap is bumped to 500K+
+- Compression of the JSONL log

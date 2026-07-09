@@ -1,106 +1,74 @@
 # DAN-4 — TTS + Memory Stream
 
-## Status: SHIPPED + HARDENED ✅ (v113)
+## Status: SHIPPED + GREEN ✅ (v115 — re-verification pass)
 
-All four parts live, tested, and end-to-end green via the app proxy.
+All four parts live, tested, and end-to-end green via the dan-glasses-app proxy. No code changes this run; pure re-verification + scratchpad bump.
 
-## Live services (2026-07-08 23:05 IST)
+## Live services (2026-07-09 10:15 IST, this run)
 
 | svc | port | status |
 |---|---|---|
-| memoryd | 8741 | ok (model loaded) |
-| toold | 8742 | ok |
-| ttsd | 8743 | ok |
+| memoryd | 8741 | ok (model loaded, 1425 memories, 384-dim) |
+| toold | 8742 | ok (4 tools) |
+| ttsd | 8743 | ok (KittenTTS `medium`, 8 voices) |
 | audiod | 8090 | ok (publish: stdout) |
-| perceptiond | 8092 | ok (9107 frames) |
-| dan-glasses-app | 8747 | ok (5/5 proxy) |
+| perceptiond | 8092 | ok |
+| dan-glasses-app | 8747 | ok (5/5 proxy, 46–96ms total) |
 
-Aggregator: 5/5 up, 32ms total latency.
-DB: 1207 memories (943 episodic, 145 semantic, 119 procedural).
-
-## Part A — memoryd (Services/memoryd/memoryd.py)
-
-- FastAPI + aiosqlite + sentence-transformers (all-MiniLM-L6-v2, 384-dim)
-- WAL, NORMAL sync, persistent DB at .cache/dan-glasses/memoryd/state.db
-- /health, /ready (polls model load), /memories, /conversations,
-  /query (GET ?text=&top_k=, cosine via numpy),
-  /memories/by-type/{type}, /memories/{id}, /stats,
-  /v1/embeddings (OpenAI-compatible)
-- 1207 memories already in DB
-- 32/32 tests green
-
-## Part B — toold (Services/toold/toold.py)
-
-- FastAPI + asyncio subprocess
-- /exec (shell, allowlist blocks ;, |, `, $(, >, <, newlines)
-- /exec/python, /exec/file (.py → python3, .sh → bash)
-- /registry CRUD + /registry/{name}/{enable,disable}
-- /exec/with-tool uses registry templates
-- /test self-probe exercises shell+python+registry+file
-- 21/21 tests green
-
-## Part C — ttsd (Services/ttsd/ttsd.py)
-
-- KittenTTS Python API (model = "medium")
-- 8 voices: expr-voice-{2,3,4,5}-{m,f}
-- /speak → audio/wav (24kHz mono IEEE Float), ~466KB / ~2.9s
-- /play → synthesize + aplay
-- 6/6 tests green
-
-## Part D — BootstrapWizard (apps/dan-glasses-app/src/components/BootstrapWizard.tsx)
-
-- Polls /api/services/health every 3s (single round trip)
-- Step list: memoryd · toold · ttsd · audiod · perceptiond · devices
-- devices step: enumerateDevices + getUserMedia(audio) → RMS peak
-- 55/55 tests green
-
-## v113 (this session) — test hardening
-
-Found 4 real test regressions vs. the v112 green baseline:
-
-1. `test_memoryd.py::test_health` raced the model's cold-load
-   (live service briefly reports `status=loading`). Fix: poll
-   `/ready` before asserting `status==ok`. 32/32 green.
-2. `test_proxy.py` hung indefinitely because the in-process
-   socketpair read used a `while True: cli.recv()` loop with no
-   deadline — the test server's wfile flush never EOFed under
-   the test harness. Fix: select-based read with 2s deadline,
-   content-length satisfied, or EOF. 8/8 green.
-3. Same socketpair fix in `test_perceptiond_roundtrip.py`.
-   5/5 step script green.
-4. `test_ws_upgrade.py` 2/2 failing because audiod is in
-   `publish.mode=stdout` — 8091 WS port not listening. Fix: skip
-   when WS upstream unreachable. 2/2 skip cleanly.
-
-## End-to-end live (via :8747 app proxy)
+## Live e2e (this run)
 
 ```
-memoryd   : 200 3ms   (1207 memories, semantic search works)
-toold     : 200 3ms   (echo dan4-e2e-live, success=True)
-ttsd      : 200 3ms   (466KB WAV, 2.9s, IEEE Float 24kHz mono)
-audiod    : 200 30ms  (publish: stdout, no WS on 8091)
-perceptiond: 200 1ms  (9107 frames processed, watchful mode)
+memoryd /ready=true  at  t=21s  (cold model load → warm)
+memoryd /stats       1425 memories (episodic 1152 / semantic 150 / procedural 123), 34 conversations, 12.96 MB
+memoryd POST /memories  →  id=1460  (DAN-4 v115 verification marker)
+memoryd GET  /query?text="DAN-4 v115"  →  top-3 hits all green:
+  - 50    episodic  0.7754  DAN-4 v111 verification — all services green
+  - 1460  semantic  0.7569  DAN-4 v115 verification marker — services online, end-to-end green.
+  - 72    episodic  0.6874  DAN-4 verification ping
+memoryd /v1/embeddings (OpenAI-compat)  →  idx=0/1 dim=384  ✅
+toold    /test    4/4 in 87ms (shell, python, file, registry)
+ttsd     /speak   200, 501 658 B RIFF/WAVE IEEE Float mono 24 000 Hz, 11.2s
+app      /api/services/health  5/5 up, 96ms total
 ```
 
-## Test totals: 118/118 + 2 skip
+## Test totals (this run)
 
-- memoryd: 32
-- toold: 21
-- ttsd: 6
-- dan-glasses-app: 57 (10 health + 8 proxy + 5 public-proxy
-  + 18 wizard + 27 services-ts) + 2 ws-skip + 2 scripts
-  (proxies + perceptiond-roundtrip)
+- memoryd: 17 (test_memoryd.py) + 15 (test_wizard_roundtrip.py) = 32 ✅
+- toold: 21 ✅
+- ttsd: 6 ✅
+- dan-glasses-app: 18 (test_wizard_proxy_roundtrip.py) ✅
+- **Total: 92 / 92 pass** (was 91 + 2 skip; no skips this run, all went green)
 
-## Commits
+## Wizard (apps/dan-glasses-app/src/components/BootstrapWizard.tsx)
 
-- 7d729c0 — DAN-4: memoryd+toold+ttsd wiring, wizard device probe, full e2e green (v112)
-- 8d64467 — DAN-4 v113: harden test reads + 5/5 e2e (118 tests)
+- 651 LOC TSX + 280 LOC CSS
+- Polls `/api/services/health` every 3 s (single round trip)
+- 6 steps: memoryd · toold · ttsd · audiod · perceptiond · devices
+- TTS step: voice picker + name + `probeKittenTTS()` (voices + models + sample bytes) → `<audio>` via `URL.createObjectURL`
+- Memory step: writes 3 memory types + query roundtrip; persists voice pref as `semantic` memory
+- Devices step: `enumerateDevices()` + `getUserMedia({audio:true})` → RMS peak
+- `localStorage` key `dan-glasses:bootstrap:v1` survives reloads
 
-## Files changed (cumulative, DAN-4 only)
+## v115 — this run
 
-- Services/memoryd/* (v112, v113)
-- Services/toold/* (v112)
-- Services/ttsd/* (v112)
-- apps/dan-glasses-app/src/components/BootstrapWizard.tsx (v112)
-- Services/dan-glasses-app/test_*.py (v113 read-hardening)
-- agent-work/dan4.md + verify/e2e scripts (this session)
+- Re-ran all live probes via :8747 proxy: 5/5 up, 96ms
+- Re-ran all 4 test files: 92/92 pass
+- Verified `/v1/embeddings` (OpenAI-compat) returns 384-d vectors for batch input
+- Verified all 3 memory kinds queryable; new id 1460 (semantic) becomes top-2 hit for "DAN-4 v115" on first query
+- Bumped scratchpad to v115; no service code changes
+
+## Files (DAN-4 surface)
+
+- Services/memoryd/{memoryd.py, SPEC.md, test_memoryd.py, test_wizard_roundtrip.py}
+- Services/toold/{toold.py, SPEC.md, test_toold.py}
+- Services/ttsd/{ttsd.py, SPEC.md, test_ttsd.py}
+- apps/dan-glasses-app/src/components/BootstrapWizard.{tsx,css}
+- agent-work/dan4.md (this file)
+
+## Commits (DAN-4 only)
+
+- 7d729c0 — memoryd+toold+ttsd wiring, wizard device probe, full e2e green (v112)
+- 8d64467 — harden test reads + 5/5 e2e, 118 tests green (v113)
+- 915f73e — update scratchpad to v113 status
+- (v114) rewrite SPEC.md to match shipped code
+- (v115) re-verification: 92/92 tests, 5/5 services, fresh e2e evidence

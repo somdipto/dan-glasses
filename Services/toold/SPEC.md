@@ -1,20 +1,28 @@
-# toold — Tool Execution Service
+# toold — Tool Execution Service (v113)
 
 ## Purpose
-Execute shell commands and Python scripts with safety guardrails and structured JSON results. Tool registry for enable/disable.
+Executes shell commands and Python scripts under an allowlist sanitizer, with structured results, a persistent tool registry, and a self-test endpoint used by the bootstrap wizard.
 
 ## Architecture
 ```
-request → validate → execute (asyncio subprocess) → structured response
+request → validate_shell_command (allowlist) → asyncio.create_subprocess_exec → structured JSON response
+python/file routes bypass shell validation
 ```
 
 ## Security Model
-- Blocked shell chars: `; & | \` $( ) > < \n \r && ||`
-- Workdir sandbox: `/tmp/toold-sandbox` (configurable via `TOOLD_WORKDIR`)
+- **Block:** `;`, single `|`, `` ` ``, `$(`, `>`, `<`, `\n`, `\r`
+- **Allow:** `&&`, `||` (chained commands), spaces, all other chars
+- Python `/exec/python` and `/exec/file` routes are not shell-string-validated (the Python interpreter is the boundary; the file route's argv is fixed by the dispatcher)
+- Workdir: `/tmp/toold-sandbox` (override via `TOOLD_WORKDIR`)
 - Max timeout: 120s (configurable via `MAX_TIMEOUT`)
 
 ## Tool Registry
-JSON file at `/tmp/toold_registry.json`:
+- Default path: `/home/workspace/.cache/dan-glasses/toold/registry.json` (atomic `tmp + replace` writes)
+- Fallback path: `/tmp/toold_registry.json` (when persistent dir is unwritable)
+- Resolved on first call to `_resolve_registry_path()`
+- Seeded on startup via `_seed_registry` event
+
+### Default tools
 ```json
 {
   "tools": [
@@ -25,76 +33,117 @@ JSON file at `/tmp/toold_registry.json`:
 }
 ```
 
+Custom tools can be registered with `POST /registry/tools`:
+```json
+{"name": "git_status", "description": "git status", "kind": "shell", "command_template": "git status --short", "enabled": true}
+```
+
 ## API Endpoints
 
-### GET /health
-Returns: `{"status": "ok", "workdir": "/tmp/toold-sandbox", "max_timeout": 120}`
+### `GET /health`
+Liveness.
+```json
+{"status":"ok","workdir":"/tmp/toold-sandbox","max_timeout":120,"registry_path":"/home/workspace/.cache/dan-glasses/toold/registry.json","version":"0.2.0"}
+```
 
-### GET /test
-Self-test: exercises shell + python + file + registry end-to-end. Used by the bootstrap wizard to verify the full tool pipeline.
-Returns:
+### `GET /ready`
+Readiness — checks registry is loadable and non-empty.
+```json
+{"ready":true,"tool_count":3}
+```
+
+### `GET /version`
+Service version + uptime.
+```json
+{"version":"0.2.0","registry_path":"…","workdir":"…","uptime_seconds":1234.56}
+```
+
+### `GET /test`
+Self-test exercising shell + python + file + registry end-to-end. Used by BootstrapWizard.
 ```json
 {
   "success": true,
   "results": {
-    "shell": {"ok": true, "stdout": "tool-ready"},
-    "python": {"ok": true, "stdout": "py-ready"},
-    "registry": {"ok": true, "tool_count": 3},
-    "file": {"ok": true, "stdout": "file-ready"}
+    "shell":    {"ok": true, "stdout": "tool-ready"},
+    "python":   {"ok": true, "stdout": "py-ready"},
+    "registry": {"ok": true, "tool_count": 4},
+    "file":     {"ok": true, "stdout": "file-ready"}
   },
-  "duration_ms": 56
+  "duration_ms": 23
 }
 ```
 
-### POST /exec
-Execute shell command.
+### `POST /exec`
+Run a shell command. Body: `{command, timeout?}`. Validates with `validate_shell_command`. 400 on disallowed chars.
+Response:
 ```json
-{"command": "ls -la", "timeout": 30}
+{"success":true,"stdout":"…","stderr":"","exit_code":0,"duration_ms":45}
 ```
-Returns: `{"success": bool, "stdout": str, "stderr": str, "exit_code": int, "duration_ms": int}`
+On timeout: `success=false`, `stderr="Timed out after Ns"`, `exit_code=-1`.
 
-### POST /exec/python
-Execute inline Python.
-```json
-{"code": "print('hello world')", "timeout": 30}
-```
+### `POST /exec/python`
+Run inline Python via `python3 -c <code>`. Body: `{code, timeout?}`.
 
-### POST /exec/file
-Execute script file.
-```json
-{"filepath": "/tmp/script.py", "args": ["arg1", "arg2"]}
-```
-- `.py` → python3
-- `.sh` → bash
-- others → direct exec
+### `POST /exec/file`
+Run a saved script. Body: `{filepath, args?}`.
+- `.py` → `python3 <file> <args>`
+- `.sh` → `bash <file> <args>`
+- other → direct `<file> <args>`
+- 404 if file missing
 
-### GET /registry
-Returns full registry JSON.
+### `GET /registry`
+Return full registry JSON.
 
-### POST /registry/{name}/enable
-Enable a tool. Returns: `{"updated": "toolname", "enabled": true}`
+### `POST /registry/tools`
+Register a new tool. Body: `{name, description, kind, command_template?, enabled?}`.
+- 409 on duplicate name.
 
-### POST /registry/{name}/disable
-Disable a tool. Returns: `{"updated": "toolname", "enabled": false}`
+### `POST /registry/{name}/enable` / `POST /registry/{name}/disable`
+Toggle a tool. 404 if name unknown.
 
-## Response Format
-All exec endpoints return:
+### `POST /exec/with-tool`
+Execute a registered tool by name. Body: `{name, args?, timeout?}`.
+- 404 if tool not in registry
+- 403 if tool is disabled
+- 400 if tool has no `command_template` or template fails the shell sanitizer
+
+## Response Format (all exec endpoints)
 ```json
 {
   "success": true,
-  "stdout": "...",
+  "stdout": "…",
   "stderr": "",
   "exit_code": 0,
   "duration_ms": 45
 }
 ```
 
-On timeout: `success=false`, `stderr="Timed out after Ns"`, `exit_code=-1`
-
 ## Port
-- 8742
+- `8742` (override via `TOOLD_PORT`)
 
 ## Dependencies
-- FastAPI
-- uvicorn
-- Python 3
+- `fastapi`
+- `uvicorn`
+- `pydantic`
+- Python 3 stdlib: `asyncio`, `subprocess`, `os`, `re`, `json`, `time`, `pathlib`
+
+## Tests (21) — `test_toold.py`
+- health, exec shell success/failure, blocked chars (semicolon, pipe, redirect, backtick, `$()`, newline)
+- exec python success, math, failure, timeout
+- exec file 404
+- registry: get, enable, disable, none-existent
+- duration_ms reported
+- register tool (idempotent across re-runs)
+- exec-with-tool success, disabled-rejected
+- chained `&&` allowed, chained `||` allowed, full injection vector list still rejected
+
+## Failure Modes
+- **Disallowed shell char** → 400 with "Command contains disallowed characters"
+- **Tool disabled** → 403
+- **Timeout** → subprocess killed, structured `{success: false, stderr: "Timed out after Ns", exit_code: -1}`
+- **Registry dir unwritable** → falls back to `/tmp/toold_registry.json` and logs a warning; service still starts
+
+## Integration
+- BootstrapWizard calls `/test` for one-shot "Tools" step
+- dan-glasses-app's `/api/services/test` aggregates with the rest
+- Custom tools registered here become invokable by `/exec/with-tool` from any service that proxies to `:8742`
