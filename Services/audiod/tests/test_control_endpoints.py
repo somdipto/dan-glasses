@@ -156,6 +156,13 @@ def test_help_endpoint_returns_api_surface():
         assert code == 200
         assert body["service"] == "audiod"
         assert body["http_port"] == 18093
+        # v1.7.1: version string must match the module constant so
+        # /help cannot drift behind the actual service version.
+        assert body["version"] == audiod_mod.__version__
+        # And the constant must look like a semver-ish string so
+        # accidental empty/None values fail loudly.
+        assert isinstance(audiod_mod.__version__, str)
+        assert audiod_mod.__version__.count(".") >= 1
         paths = {ep["path"] for ep in body["endpoints"]}
         assert "/health" in paths
         assert "/status" in paths

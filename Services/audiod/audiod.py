@@ -4,6 +4,11 @@
 ALSA capture → VAD (Silero) → whisper.cpp → transcript events
 """
 
+# Service version. Surfaced via GET /help and used by tests so the
+# /help contract cannot drift silently when we ship a new version
+# without updating the constant. Bump on every release.
+__version__ = "1.7.1"
+
 import sys
 import yaml
 import signal
@@ -208,7 +213,7 @@ class HealthHandler(http.server.BaseHTTPRequestHandler):
             ws_port = cfg.get("publish", {}).get("ws_port", ws_port)
         body = {
             "service": "audiod",
-            "version": "1.0",
+            "version": __version__,
             "http_port": http_port,
             "ws_port": ws_port,
             "endpoints": [

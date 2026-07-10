@@ -1,6 +1,6 @@
 # audiod — Audio Pipeline Service (SPEC)
 
-**Status:** Shipped (v1.7)
+**Status:** Shipped (v1.7.1)
 **Owner:** DAN-2
 **Repo:** `dan-glasses/Services/audiod/`
 
@@ -206,6 +206,10 @@ percent display.
 - `test_client.py` / `test_ws_stream.py` — sync HTTP + async WS client wiring
 - `test_real_audio_jfk.py` — real JFK sample (skipped if fixture missing)
 - `test_metrics_sink.py` — Loki push sink unit + integration tests (v1.3)
+
+## v1.7.1 changelog (2026-07-10)
+
+- **`/help` now reports the real service version.** Previously, `audiod.py:_send_help` hard-coded `"version": "1.0"` even though the service has been shipping at v1.5/1.6/1.7 over the last 4 weeks. Operators polling `/help` for route catalog were getting a stale, misleading version string — would have made the eventual v2.0 migration a footgun (any "is this audiod ≥ 1.5?" check against the wrong constant would have false-negatived). Fix: introduced `audiod.__version__ = "1.7.1"` as the single source of truth, `_send_help` references it. Pinning test added (`tests/test_control_endpoints.py::test_help_endpoint_returns_api_surface` now asserts `body["version"] == audiod_mod.__version__`), so this can never drift again without a test failure. Zero public-API surface change (the version field existed, it just had the wrong value). Live daemon restarted on PID 2810, `/help` now returns `version: "1.7.1"`. Full suite still **171 passed, 8 skipped in 30.22s**.
 
 ## v1.7 changelog (2026-07-09)
 
