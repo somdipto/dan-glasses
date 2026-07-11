@@ -25,6 +25,10 @@ from audiod import HealthHandler, start_health_server, _build_pipeline_from_conf
 
 def _free_port() -> int:
     s = socket.socket()
+    # SO_REUSEADDR avoids TIME_WAIT races when the live daemon on 8090
+    # or a prior test holds the port in the brief window between
+    # _free_port() returning and start_health_server() rebinding.
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(("127.0.0.1", 0))
     port = s.getsockname()[1]
     s.close()

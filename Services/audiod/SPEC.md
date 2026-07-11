@@ -1,6 +1,6 @@
 # audiod — Audio Pipeline Service (SPEC)
 
-**Status:** Shipped (v1.7.1)
+**Status:** Shipped (v1.7.2)
 **Owner:** DAN-2
 **Repo:** `dan-glasses/Services/audiod/`
 
@@ -206,6 +206,10 @@ percent display.
 - `test_client.py` / `test_ws_stream.py` — sync HTTP + async WS client wiring
 - `test_real_audio_jfk.py` — real JFK sample (skipped if fixture missing)
 - `test_metrics_sink.py` — Loki push sink unit + integration tests (v1.3)
+
+## v1.7.2 changelog (2026-07-11)
+
+- **Test-suite port-reuse race fixed.** The full pytest run (`tests/`) intermittently failed `tests/test_live_ready_probes.py::TestReadyProbe::test_ready_pipeline_returns_200` with `OSError: [Errno 98] Address already in use` when the live audiod daemon was still bound to `0.0.0.0:8090` and a prior test in the same process had just released its `_free_port` socket. Root cause: the test helper `_free_port()` (`tests/test_live_ready_probes.py:26`, `tests/test_health_startup_probe.py:30`) closed its probe socket without `SO_REUSEADDR`, leaving the ephemeral port in `TIME_WAIT`. When `start_health_server` then rebound that exact port for a new test, the kernel could hand it to another test first. Fix: both `_free_port` helpers now `setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)` before binding. The race is gone — full suite now **172 passed, 7 skipped in 41.13s** (gained 1, lost 1 sandbox-skip — `test_ready_pipeline_returns_200` is now deterministic, not environmentally skipped). Zero production code change, zero public-API change, zero test-API change. Daemon not restarted (test fix only).
 
 ## v1.7.1 changelog (2026-07-10)
 

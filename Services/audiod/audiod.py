@@ -7,7 +7,7 @@ ALSA capture → VAD (Silero) → whisper.cpp → transcript events
 # Service version. Surfaced via GET /help and used by tests so the
 # /help contract cannot drift silently when we ship a new version
 # without updating the constant. Bump on every release.
-__version__ = "1.7.1"
+__version__ = "1.7.2"
 
 import sys
 import yaml
