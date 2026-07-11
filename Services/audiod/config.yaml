@@ -17,7 +17,7 @@ whisper:
   threads: 2
 
 publish:
-  mode: stdout
+  mode: both
   socket_path: /run/audiod.sock
   ws_port: 8091
 
